@@ -34,8 +34,50 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await prisma.user.deleteMany({ where: { email: EMAIL } });
+  await cleanupApplications();
+  await prisma.role.deleteMany({ where: { id: CONTRACT_ROLE_ID } });
   await disconnectDatabase();
 });
+
+const CONTRACT_ROLE_ID = '22222222-2222-4222-8222-222222222222';
+const CONTRACT_CANDIDATE_PREFIX = 'openapi.test.candidate';
+let contractSequence = 0;
+
+/** A throwaway APPLIED application, so the stage routes can be driven for real. */
+async function givenApplication(): Promise<{ candidateId: string; roleId: string }> {
+  const hiringManager = await prisma.user.findFirstOrThrow({
+    where: { role: UserRole.HIRING_MANAGER },
+    select: { id: true },
+  });
+  await prisma.role.upsert({
+    where: { id: CONTRACT_ROLE_ID },
+    create: { id: CONTRACT_ROLE_ID, title: 'Contract Test Role', hiringManagerId: hiringManager.id },
+    update: {},
+  });
+
+  const candidate = await prisma.candidate.create({
+    data: {
+      name: `Contract Test ${(contractSequence += 1)}`,
+      email: `${CONTRACT_CANDIDATE_PREFIX}.${contractSequence}@example.net`,
+      applications: { create: { roleId: CONTRACT_ROLE_ID } },
+    },
+    select: { id: true },
+  });
+
+  return { candidateId: candidate.id, roleId: CONTRACT_ROLE_ID };
+}
+
+async function cleanupApplications(): Promise<void> {
+  const candidates = await prisma.candidate.findMany({
+    where: { email: { startsWith: CONTRACT_CANDIDATE_PREFIX } },
+    select: { applications: { select: { id: true } } },
+  });
+  const applicationIds = candidates.flatMap((c) => c.applications.map((a) => a.id));
+  await prisma.auditEvent.deleteMany({ where: { entityId: { in: applicationIds } } });
+  await prisma.candidate.deleteMany({
+    where: { email: { startsWith: CONTRACT_CANDIDATE_PREFIX } },
+  });
+}
 
 describe('the OpenAPI document', () => {
   it('builds, and is served at /openapi.json', async () => {
@@ -44,6 +86,8 @@ describe('the OpenAPI document', () => {
     expect(response.status).toBe(200);
     expect(response.body.openapi).toBe('3.1.0');
     expect(Object.keys(response.body.paths).sort()).toEqual([
+      '/applications/{candidateId}/{roleId}/override',
+      '/applications/{candidateId}/{roleId}/stage',
       '/auth/login',
       '/auth/me',
       '/candidates/{id}',
@@ -107,12 +151,15 @@ describe('the OpenAPI document', () => {
 
     // The named models are shared, not re-inlined per route.
     expect(Object.keys(document.components.schemas).sort()).toEqual([
+      'ApplicationStage',
       'CandidateInterviewerView',
       'CandidateRecruiterView',
       'Health',
       'LoginResponse',
       'Problem',
       'PublicUser',
+      'StageTransition',
+      'StageTransitionResult',
     ]);
   });
 
@@ -221,6 +268,53 @@ describe('documented response shapes match real responses', () => {
 
     expect(response.status).toBe(404);
     expect(() => problemSchema.parse(response.body)).not.toThrow();
+  });
+
+  /**
+   * The stage routes, driven against a throwaway application so the seeded fixture's
+   * starting position is untouched.
+   */
+  it('PATCH /applications/:candidateId/:roleId/stage 200 and 422', async () => {
+    const login = await request(app)
+      .post('/auth/login')
+      .send({ email: RECRUITER_EMAIL, password: DEV_PASSWORD });
+    const auth = `Bearer ${login.body.token}`;
+    const target = await givenApplication();
+
+    const moved = await request(app)
+      .patch(`/applications/${target.candidateId}/${target.roleId}/stage`)
+      .set('authorization', auth)
+      .send({ toStage: 'SCREEN' });
+
+    expect(moved.status).toBe(200);
+    expect(() =>
+      documentedSchema('/applications/:candidateId/:roleId/stage', 'patch', 200).parse(moved.body),
+    ).not.toThrow();
+
+    const refused = await request(app)
+      .patch(`/applications/${target.candidateId}/${target.roleId}/stage`)
+      .set('authorization', auth)
+      .send({ toStage: 'HIRED' });
+
+    expect(refused.status).toBe(422);
+    expect(() => problemSchema.parse(refused.body)).not.toThrow();
+  });
+
+  it('POST /applications/:candidateId/:roleId/override 200', async () => {
+    const login = await request(app)
+      .post('/auth/login')
+      .send({ email: RECRUITER_EMAIL, password: DEV_PASSWORD });
+    const target = await givenApplication();
+
+    const response = await request(app)
+      .post(`/applications/${target.candidateId}/${target.roleId}/override`)
+      .set('authorization', `Bearer ${login.body.token}`)
+      .send({ toStage: 'OFFER', reason: 'Contract test override, recorded on purpose.' });
+
+    expect(response.status).toBe(200);
+    expect(() =>
+      documentedSchema('/applications/:candidateId/:roleId/override', 'post', 200).parse(response.body),
+    ).not.toThrow();
   });
 
   it('GET /health 200', async () => {

@@ -200,6 +200,12 @@ export function buildOpenApiDocument(): Record<string, unknown> {
     tags: [
       { name: 'Auth', description: 'Login and the identity behind a bearer token.' },
       {
+        name: 'Applications',
+        description:
+          'The pipeline unit: a candidate on a role. Stage movement runs through one ' +
+          'machine and leaves one trace (PLAN.md §3, §8).',
+      },
+      {
         name: 'Candidates',
         description:
           'Scoped candidate reads. The field set follows the role, and the scope is in the ' +

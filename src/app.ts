@@ -1,6 +1,7 @@
 import express, { type Express } from 'express';
 import helmet from 'helmet';
 import { healthRouter } from './http/routes/health.js';
+import { applicationsRouter } from './http/routes/applications.js';
 import { authRouter } from './http/routes/auth.js';
 import { candidatesRouter } from './http/routes/candidates.js';
 import { docsRouter } from './http/routes/docs.js';
@@ -50,6 +51,7 @@ export function createApp(): Express {
   // Feature routers. Everything from here down is behind `requireAuth`; PLAN.md §4
   // leaves exactly two routes open, and both are mounted above.
   app.use(candidatesRouter);
+  app.use(applicationsRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
