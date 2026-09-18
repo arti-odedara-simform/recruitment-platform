@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # PLAN.md §14: testcontainers may not be available, so CI runs the decided
+    # fallback — a real Postgres 16 service, same as the compose stack.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: recruitment_app
+          POSTGRES_PASSWORD: recruitment_dev_pw
+          POSTGRES_DB: recruitment_poc_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U recruitment_app -d recruitment_poc_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://recruitment_app:recruitment_dev_pw@localhost:5432/recruitment_poc_test?schema=public
+      JWT_SECRET: ci_secret_that_is_at_least_thirty_two_characters_long
+      NODE_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npx prisma generate
+
+      - name: Write .env.test
+        run: |
+          {
+            echo "NODE_ENV=test"
+            echo "PORT=4001"
+            echo "DATABASE_URL=${DATABASE_URL}"
+            echo "JWT_SECRET=${JWT_SECRET}"
+            echo "SEED=false"
+            echo "LOG_QUERIES=false"
+          } > .env.test
+
+      - run: npm run lint
+
+      - run: npm run typecheck
+
+      - run: npm test

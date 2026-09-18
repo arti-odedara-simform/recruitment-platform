@@ -1,0 +1,25 @@
+node_modules/
+dist/
+coverage/
+
+# Real secrets. .env.example is the documented template.
+.env
+.env.*
+!.env.example
+
+*.log
+.DS_Store
+
+# npm is this project's package manager (see `packageManager` in package.json).
+# A stray pnpm/yarn run must not leave a second lockfile behind.
+pnpm-lock.yaml
+pnpm-workspace.yaml
+yarn.lock
+.pnpm-store/
+
+*.tsbuildinfo
+.vscode/
+.idea/
+*.pem
+*.key
+.npmrc
