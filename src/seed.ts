@@ -1,60 +1,99 @@
 import { UserRole } from '@prisma/client';
-import { hashPassword } from './auth/password.js';
 import { disconnectDatabase } from './db/client.js';
-import { upsertUser } from './repositories/seed.repository.js';
+import { seedDatabase } from './seed/run.js';
+import {
+  APPLICATIONS,
+  ASSIGNMENTS,
+  CANDIDATES,
+  CANDIDATE_IDS,
+  DEV_PASSWORD,
+  ROUNDS,
+  USERS,
+  type CandidateKey,
+  type UserKey,
+} from './seed/fixture.js';
 
 /**
- * Seeds the user accounts PLAN.md §10 calls for — 2 recruiters, 4 interviewers, 1 hiring
- * manager — and prints the login table.
+ * CLI entrypoint: writes the PLAN.md §10 fixture, then prints what a reviewer needs to
+ * drive it — login credentials, the ids the README's curl examples use, and the
+ * assignment graph the §12 Q3 walkthrough turns on.
  *
- * Users only, for now. The roles, candidates, rounds and assignments §10 also lists
- * belong with the features that read them (D4 onward); seeding them before there is a
- * scoped repository to read them through would be data with nothing to prove.
+ * The visibility table below is derived from the fixture rather than typed out, so it
+ * cannot drift from what was actually written.
  */
 
-/**
- * Development credentials, printed on every run and committed to the repository. They
- * exist so a reviewer can `curl` the API a minute after `docker compose up`. Nothing here
- * is a secret, and nothing here should ever reach an environment that holds real data.
- */
-const DEV_PASSWORD = 'poc-dev-password';
+/** Which candidates each interviewer reaches, following assignment -> round -> application. */
+function visibleCandidates(interviewer: UserKey): CandidateKey[] {
+  const rounds = new Set<string>(
+    ASSIGNMENTS.filter((a) => a.interviewer === interviewer).map((a) => a.round),
+  );
+  const applications = new Set<string>(
+    ROUNDS.filter((r) => rounds.has(r.key)).map((r) => r.application),
+  );
+  const candidates = APPLICATIONS.filter((a) => applications.has(a.key)).map((a) => a.candidate);
+  return [...new Set<CandidateKey>(candidates)].sort();
+}
 
-const USERS: Array<{ email: string; name: string; role: UserRole }> = [
-  { email: 'rachel.recruiter@example.com', name: 'Rachel Ahmed', role: UserRole.RECRUITER },
-  { email: 'raj.recruiter@example.com', name: 'Raj Patel', role: UserRole.RECRUITER },
-  { email: 'ingrid.interviewer@example.com', name: 'Ingrid Olsen', role: UserRole.INTERVIEWER },
-  { email: 'ivan.interviewer@example.com', name: 'Ivan Petrov', role: UserRole.INTERVIEWER },
-  { email: 'iris.interviewer@example.com', name: 'Iris Chen', role: UserRole.INTERVIEWER },
-  { email: 'ian.interviewer@example.com', name: 'Ian Murphy', role: UserRole.INTERVIEWER },
-  { email: 'hana.manager@example.com', name: 'Hana Suzuki', role: UserRole.HIRING_MANAGER },
-];
+function pad(value: string, width: number): string {
+  return value.padEnd(width);
+}
 
-async function main(): Promise<void> {
-  // One hash for every seeded account: bcrypt at cost 12 is ~250ms, and hashing the same
-  // string seven times would add two seconds to container boot for no benefit. Each row
-  // still gets its own salt-bearing hash string — they are simply identical passwords.
-  const passwordHash = await hashPassword(DEV_PASSWORD);
-
-  for (const user of USERS) {
-    await upsertUser({ ...user, passwordHash });
-  }
-
+function printCredentials(): void {
   const width = Math.max(...USERS.map((u) => u.email.length));
   console.log(`\n[seed] ${USERS.length} users ready. Development credentials:\n`);
   for (const user of USERS) {
-    console.log(`  ${user.email.padEnd(width)}  ${DEV_PASSWORD}  (${user.role})`);
+    console.log(`  ${pad(user.email, width)}  ${DEV_PASSWORD}  (${user.role})`);
   }
+}
 
+function printFixture(): void {
+  console.log(
+    `\n[seed] Fixture: ${CANDIDATES.length} candidates, ${APPLICATIONS.length} applications, ` +
+      `${ROUNDS.length} rounds, ${ASSIGNMENTS.length} assignments.\n`,
+  );
+
+  const nameOf = new Map(CANDIDATES.map((c) => [c.key, c.name]));
+  console.log('[seed] Interviewer visibility (candidates reachable via assigned rounds):\n');
+
+  for (const user of USERS.filter((u) => u.role === UserRole.INTERVIEWER)) {
+    const visible = visibleCandidates(user.key);
+    const listed = visible.length
+      ? visible.map((key) => `${key} ${nameOf.get(key) ?? ''}`).join(', ')
+      : '(none — assigned to no round)';
+    console.log(`  ${pad(user.name, 14)} ${listed}`);
+  }
+}
+
+function printWalkthrough(): void {
+  // The two candidates the §12 Q3 demo contrasts: Ingrid is assigned to c01 and not to
+  // c02, so the same interviewer gets 200 on one and 404 on the other. Ian, assigned to
+  // nothing, gets 404 on both.
   console.log(`
 [seed] Get a token:
 
-  curl -s localhost:4000/auth/login -H 'content-type: application/json' \\
-    -d '{"email":"${USERS[0]?.email}","password":"${DEV_PASSWORD}"}'
+  TOKEN=$(curl -s localhost:4000/auth/login -H 'content-type: application/json' \\
+    -d '{"email":"${USERS[0]?.email}","password":"${DEV_PASSWORD}"}' | jq -r .token)
 
 [seed] Then call an authenticated route:
 
   curl -s localhost:4000/auth/me -H "authorization: Bearer $TOKEN"
+
+[seed] Candidate ids for the authorization walkthrough (PLAN.md §12 Q3):
+
+  Amara Osei   ${CANDIDATE_IDS.c01}   Ingrid IS assigned
+  Bruno Costa  ${CANDIDATE_IDS.c02}   Ingrid is NOT assigned
+
+  As a recruiter:   full record, contact details included.
+  As ingrid:        Amara -> 200 without contact fields; Bruno -> 404.
+  As ian:           both -> 404; he is assigned to no round at all.
 `);
+}
+
+async function main(): Promise<void> {
+  await seedDatabase();
+  printCredentials();
+  printFixture();
+  printWalkthrough();
 }
 
 main()

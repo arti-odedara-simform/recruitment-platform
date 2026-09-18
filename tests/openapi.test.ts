@@ -7,11 +7,18 @@ import { prisma, disconnectDatabase } from '../src/db/client.js';
 import { hashPassword } from '../src/auth/password.js';
 import { buildOpenApiDocument, registeredOperations } from '../src/http/openapi/registry.js';
 import { problemSchema } from '../src/http/openapi/schemas.js';
+import { CANDIDATE_IDS, DEV_PASSWORD } from '../src/seed/fixture.js';
 
 const app = createApp();
 
 const PASSWORD = 'contract-test-password';
 const EMAIL = 'openapi.test.recruiter@example.com';
+
+// The candidate route is driven with seeded accounts rather than this file's throwaway
+// recruiter: its responses depend on the fixture's assignment graph (Ingrid is assigned
+// to c01), which a freshly created user has no place in.
+const RECRUITER_EMAIL = 'rachel.recruiter@example.com';
+const INTERVIEWER_EMAIL = 'ingrid.interviewer@example.com';
 
 beforeAll(async () => {
   await prisma.user.deleteMany({ where: { email: EMAIL } });
@@ -36,7 +43,12 @@ describe('the OpenAPI document', () => {
 
     expect(response.status).toBe(200);
     expect(response.body.openapi).toBe('3.1.0');
-    expect(Object.keys(response.body.paths).sort()).toEqual(['/auth/login', '/auth/me', '/health']);
+    expect(Object.keys(response.body.paths).sort()).toEqual([
+      '/auth/login',
+      '/auth/me',
+      '/candidates/{id}',
+      '/health',
+    ]);
   });
 
   // The whole argument for generating the spec is that it cannot drift from the
@@ -95,6 +107,8 @@ describe('the OpenAPI document', () => {
 
     // The named models are shared, not re-inlined per route.
     expect(Object.keys(document.components.schemas).sort()).toEqual([
+      'CandidateInterviewerView',
+      'CandidateRecruiterView',
       'Health',
       'LoginResponse',
       'Problem',
@@ -169,6 +183,43 @@ describe('documented response shapes match real responses', () => {
     const response = await request(app).get('/auth/me');
 
     expect(response.status).toBe(401);
+    expect(() => problemSchema.parse(response.body)).not.toThrow();
+  });
+
+  /**
+   * Both arms of the candidate union, driven for real. The interviewer view is a
+   * `strictObject`, so this fails if a contact field ever appears in that response —
+   * the contract test and the leak sweep in tests/candidates.test.ts catch the same
+   * regression from opposite directions.
+   */
+  it('GET /candidates/:id 200 — recruiter and interviewer arms', async () => {
+    const schema = documentedSchema('/candidates/:id', 'get', 200);
+
+    for (const [email, id] of [
+      [RECRUITER_EMAIL, CANDIDATE_IDS.c01],
+      [INTERVIEWER_EMAIL, CANDIDATE_IDS.c01],
+    ] as const) {
+      const login = await request(app)
+        .post('/auth/login')
+        .send({ email, password: DEV_PASSWORD });
+      const response = await request(app)
+        .get(`/candidates/${id}`)
+        .set('authorization', `Bearer ${login.body.token}`);
+
+      expect(response.status, `as ${email}`).toBe(200);
+      expect(() => schema.parse(response.body), `as ${email}`).not.toThrow();
+    }
+  });
+
+  it('GET /candidates/:id 404', async () => {
+    const login = await request(app)
+      .post('/auth/login')
+      .send({ email: INTERVIEWER_EMAIL, password: DEV_PASSWORD });
+    const response = await request(app)
+      .get(`/candidates/${CANDIDATE_IDS.c02}`)
+      .set('authorization', `Bearer ${login.body.token}`);
+
+    expect(response.status).toBe(404);
     expect(() => problemSchema.parse(response.body)).not.toThrow();
   });
 

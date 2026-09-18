@@ -2,6 +2,7 @@ import express, { type Express } from 'express';
 import helmet from 'helmet';
 import { healthRouter } from './http/routes/health.js';
 import { authRouter } from './http/routes/auth.js';
+import { candidatesRouter } from './http/routes/candidates.js';
 import { docsRouter } from './http/routes/docs.js';
 import { errorHandler, notFoundHandler } from './http/middleware/errorHandler.js';
 import { env } from './config/env.js';
@@ -46,9 +47,9 @@ export function createApp(): Express {
     app.use(docsRouter);
   }
 
-  // Feature routers mount here — the scoped read paths (D4) next. Everything after this
-  // point goes behind `requireAuth`; PLAN.md §4 leaves exactly two routes open, and both
-  // are already mounted above.
+  // Feature routers. Everything from here down is behind `requireAuth`; PLAN.md §4
+  // leaves exactly two routes open, and both are mounted above.
+  app.use(candidatesRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

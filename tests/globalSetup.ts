@@ -9,9 +9,10 @@ import { config } from 'dotenv';
  *
  * PLAN.md §14 flagged testcontainers as a risk. This is the decided fallback: a
  * separate database name on the same Postgres, so the suite runs identically on a
- * laptop, in the compose stack, and in CI.
+ * laptop, in the compose stack, and in CI. The demo fixture is seeded here too, so
+ * every file starts from the same assignment graph.
  */
-export default function globalSetup(): void {
+export default async function globalSetup(): Promise<void> {
   config({ path: '.env.test', override: true });
 
   const url = process.env.DATABASE_URL;
@@ -29,4 +30,17 @@ export default function globalSetup(): void {
     stdio: 'inherit',
     env: { ...process.env, DATABASE_URL: url },
   });
+
+  // The PLAN.md §10 fixture, so the authorization tests can assert against a known
+  // assignment graph (Ingrid sees c01 and not c02; Ian sees nothing) instead of each
+  // building one. Imported dynamically: a static import would pull in src/config/env.ts
+  // before the `config()` call above has pointed DATABASE_URL at the test database.
+  //
+  // Seeding is an upsert, so it is safe to re-run, and it never removes rows a test
+  // created. Tests that need isolation still create and clean up their own rows, as
+  // tests/auth.test.ts does.
+  const { seedDatabase } = await import('../src/seed/run.js');
+  const { disconnectDatabase } = await import('../src/db/client.js');
+  await seedDatabase();
+  await disconnectDatabase();
 }

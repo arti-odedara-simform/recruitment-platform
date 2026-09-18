@@ -199,6 +199,12 @@ export function buildOpenApiDocument(): Record<string, unknown> {
     servers: [{ url: `http://localhost:${env.PORT}`, description: 'Local development' }],
     tags: [
       { name: 'Auth', description: 'Login and the identity behind a bearer token.' },
+      {
+        name: 'Candidates',
+        description:
+          'Scoped candidate reads. The field set follows the role, and the scope is in the ' +
+          'query rather than applied after it (PLAN.md §1).',
+      },
       { name: 'Health', description: 'Liveness, including the database round-trip.' },
     ],
     components: {
