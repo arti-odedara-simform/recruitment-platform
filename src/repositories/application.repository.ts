@@ -1,4 +1,4 @@
-import type { Stage, TransitionKind } from '@prisma/client';
+import { RoleStatus, Stage, type TransitionKind } from '@prisma/client';
 import { prisma } from '../db/client.js';
 import { NotFoundError } from '../errors/AppError.js';
 import type { Actor } from '../domain/actor.js';
@@ -145,6 +145,92 @@ export async function runStageTransition(input: StageTransitionInput): Promise<S
         currentStageEnteredAt: application.currentStageEnteredAt,
       },
       transition,
+    };
+  });
+}
+
+/**
+ * Puts a candidate onto a req. The pipeline unit comes into existence here, at APPLIED —
+ * every later stage is the stage machine's business (PLAN.md §3).
+ *
+ * Three failure modes, and only one of them is checked in application code:
+ *
+ * - **No such req** — read inside the transaction, so the status check below cannot race
+ *   a req being deleted between the two statements.
+ * - **The req is CLOSED** — a domain rule, and the only one that needs a read.
+ * - **No such candidate**, or **this candidate is already on this req** — neither is
+ *   checked. The FK and the `@@unique([candidateId, roleId])` index answer both, and the
+ *   central error mapping turns `23503` into 404 and `23505` into 409. A read-then-write
+ *   version would be longer and would have a window where two simultaneous requests both
+ *   see "not applied yet" (PLAN.md §5, §7).
+ */
+export type CreateApplicationResult =
+  | { outcome: 'CREATED'; application: ApplicationStageView }
+  | { outcome: 'NO_SUCH_ROLE' }
+  | { outcome: 'ROLE_CLOSED'; title: string };
+
+export async function createApplication(
+  actor: Actor,
+  input: { candidateId: string; roleId: string },
+): Promise<CreateApplicationResult> {
+  return prisma.$transaction(async (tx) => {
+    const role = await tx.role.findUnique({
+      where: { id: input.roleId },
+      select: { id: true, title: true, status: true },
+    });
+
+    if (!role) {
+      return { outcome: 'NO_SUCH_ROLE' };
+    }
+
+    if (role.status === RoleStatus.CLOSED) {
+      return { outcome: 'ROLE_CLOSED', title: role.title };
+    }
+
+    const application = await tx.application.create({
+      data: {
+        candidateId: input.candidateId,
+        roleId: input.roleId,
+        currentStage: Stage.APPLIED,
+      },
+      select: {
+        id: true,
+        candidateId: true,
+        roleId: true,
+        currentStage: true,
+        currentStageEnteredAt: true,
+      },
+    });
+
+    /**
+     * No `StageTransition` row: there is no stage it moved *from*. The creation is the
+     * audit record, and `GET /audit/candidates/:id` merges it into the same timeline as
+     * the transitions that follow it.
+     */
+    await tx.auditEvent.create({
+      data: {
+        actorId: actor.id,
+        action: 'APPLICATION_CREATED',
+        entity: 'Application',
+        entityId: application.id,
+        payload: {
+          candidateId: input.candidateId,
+          roleId: input.roleId,
+          currentStage: application.currentStage,
+        },
+      },
+      select: { id: true },
+    });
+
+    return {
+      outcome: 'CREATED',
+      application: {
+        applicationId: application.id,
+        candidateId: application.candidateId,
+        roleId: application.roleId,
+        currentStage: application.currentStage,
+        currentStageEnteredAt: application.currentStageEnteredAt,
+      },
     };
   });
 }

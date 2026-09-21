@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import request from 'supertest';
-import { Stage, TransitionKind } from '@prisma/client';
+import { RoleStatus, Stage, TransitionKind } from '@prisma/client';
 import { createApp } from '../src/app.js';
 import { prisma, disconnectDatabase } from '../src/db/client.js';
 import { ALLOWED } from '../src/domain/stageMachine.js';
@@ -22,6 +22,8 @@ const INTERVIEWER = 'ingrid.interviewer@example.com';
 const HIRING_MANAGER = 'hana.manager@example.com';
 
 const TEST_ROLE_ID = '11111111-1111-4111-8111-111111111111';
+/** A closed req, so `POST /applications` has something to refuse. */
+const CLOSED_ROLE_ID = '11111111-1111-4111-8111-111111111112';
 const TEST_CANDIDATE_PREFIX = 'stage.test';
 
 const NO_SUCH_UUID = '00000000-0000-4000-8000-000000000000';
@@ -53,13 +55,24 @@ beforeAll(async () => {
     },
     update: {},
   });
+
+  await prisma.role.upsert({
+    where: { id: CLOSED_ROLE_ID },
+    create: {
+      id: CLOSED_ROLE_ID,
+      title: 'Stage Machine Test Role (closed)',
+      hiringManagerId: hiringManager.id,
+      status: RoleStatus.CLOSED,
+    },
+    update: { status: RoleStatus.CLOSED },
+  });
 });
 
 afterEach(cleanup);
 
 afterAll(async () => {
   await cleanup();
-  await prisma.role.deleteMany({ where: { id: TEST_ROLE_ID } });
+  await prisma.role.deleteMany({ where: { id: { in: [TEST_ROLE_ID, CLOSED_ROLE_ID] } } });
   await disconnectDatabase();
 });
 
@@ -424,5 +437,105 @@ describe('the stage machine itself', () => {
     for (const [from, allowed] of Object.entries(ALLOWED)) {
       expect(allowed).not.toContain(from as Stage);
     }
+  });
+});
+
+/** PLAN.md §4: the pipeline unit comes into existence here, at APPLIED. */
+describe('POST /applications', () => {
+  async function givenCandidate(): Promise<string> {
+    const candidate = await prisma.candidate.create({
+      data: {
+        name: `Stage Test Unapplied ${(sequence += 1)}`,
+        email: `${TEST_CANDIDATE_PREFIX}.unapplied.${sequence}@example.net`,
+      },
+      select: { id: true },
+    });
+    return candidate.id;
+  }
+
+  function post(email: string | undefined, payload: unknown) {
+    const call = request(app).post('/applications').send(payload as object);
+    return email ? call.set('authorization', `Bearer ${tokens[email]}`) : call;
+  }
+
+  it('puts a candidate onto a req at APPLIED, with an audit row', async () => {
+    const candidateId = await givenCandidate();
+
+    const response = await post(RECRUITER, { candidateId, roleId: TEST_ROLE_ID });
+
+    expect(response.status).toBe(201);
+    expect(response.body).toMatchObject({
+      candidateId,
+      roleId: TEST_ROLE_ID,
+      currentStage: Stage.APPLIED,
+    });
+
+    const events = await auditFor(candidateId);
+    expect(events.map((event) => event.action)).toEqual(['APPLICATION_CREATED']);
+    expect(events[0]?.actorId).toBe(recruiterId);
+
+    // No StageTransition: there is no stage it moved *from*.
+    expect(await transitionsFor(candidateId)).toEqual([]);
+  });
+
+  it('409s a candidate already on that req, without a read-then-write', async () => {
+    const candidateId = await givenCandidate();
+    expect((await post(RECRUITER, { candidateId, roleId: TEST_ROLE_ID })).status).toBe(201);
+
+    const again = await post(RECRUITER, { candidateId, roleId: TEST_ROLE_ID });
+
+    expect(again.status).toBe(409);
+    expect(await prisma.application.count({ where: { candidateId } })).toBe(1);
+  });
+
+  it('yields exactly one 201 and one 409 when the same pair is posted twice at once', async () => {
+    const candidateId = await givenCandidate();
+
+    const responses = await Promise.all([
+      post(RECRUITER, { candidateId, roleId: TEST_ROLE_ID }),
+      post(RECRUITER, { candidateId, roleId: TEST_ROLE_ID }),
+    ]);
+
+    expect(responses.map((response) => response.status).sort()).toEqual([201, 409]);
+    expect(await prisma.application.count({ where: { candidateId } })).toBe(1);
+  });
+
+  it('400s a CLOSED req and names the field', async () => {
+    const candidateId = await givenCandidate();
+
+    const response = await post(RECRUITER, { candidateId, roleId: CLOSED_ROLE_ID });
+
+    expect(response.status).toBe(400);
+    expect(response.body.errors?.[0].path).toBe('body.roleId');
+    expect(await prisma.application.count({ where: { candidateId } })).toBe(0);
+  });
+
+  it('404s an unknown req and an unknown candidate', async () => {
+    const candidateId = await givenCandidate();
+
+    expect((await post(RECRUITER, { candidateId, roleId: NO_SUCH_UUID })).status).toBe(404);
+    expect(
+      (await post(RECRUITER, { candidateId: NO_SUCH_UUID, roleId: TEST_ROLE_ID })).status,
+    ).toBe(404);
+  });
+
+  it('400s a malformed body before any row is written', async () => {
+    const response = await post(RECRUITER, { candidateId: 'nope', roleId: TEST_ROLE_ID });
+
+    expect(response.status).toBe(400);
+    expect(response.body.errors?.[0].path).toBe('body.candidateId');
+  });
+
+  it.each([INTERVIEWER, HIRING_MANAGER])('403s %s', async (email) => {
+    const candidateId = await givenCandidate();
+
+    const response = await post(email, { candidateId, roleId: TEST_ROLE_ID });
+
+    expect(response.status).toBe(403);
+    expect(await prisma.application.count({ where: { candidateId } })).toBe(0);
+  });
+
+  it('401s without a token', async () => {
+    expect((await post(undefined, { candidateId: NO_SUCH_UUID, roleId: TEST_ROLE_ID })).status).toBe(401);
   });
 });

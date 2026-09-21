@@ -218,6 +218,18 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           'query rather than applied after it (PLAN.md §1).',
       },
       {
+        name: 'Roles',
+        description:
+          'Job reqs — the thing candidates apply to. Unrelated to `UserRole`, the ' +
+          'authorization enum (PLAN.md §2).',
+      },
+      {
+        name: 'Audit',
+        description:
+          'The structured trace. Every mutating service writes its audit row inside the ' +
+          'same transaction as the mutation (PLAN.md §8).',
+      },
+      {
         name: 'Pipeline',
         description:
           'Counts and ageing per stage per open req, answered by one grouped aggregate ' +

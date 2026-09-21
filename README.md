@@ -5,25 +5,49 @@ deliverable. [PLAN.md](PLAN.md) is the design document; this README covers runni
 
 ## Status
 
-Scaffolding, the database schema and authentication are in place (PLAN.md §11, D1–D3):
+Weeks 1 and most of week 2 of [PLAN.md](PLAN.md) §11 are in place — D1–D9. The API is
+complete enough to build a pipeline through, not only to read a seeded one.
 
 | Done | |
 |---|---|
-| TypeScript / Express 5 / Prisma 7 / zod project | `npm run dev` serves `GET /health` |
-| Full domain schema + initial migration | 9 tables, the indexes from §2 and §6 |
+| TypeScript / Express 5 / Prisma 7 / zod project | `npm run dev`, `compose.yaml`, `Dockerfile`, CI |
+| Full domain schema + migration | 9 tables, the indexes from §2 and §6 |
 | Raw-SQL CHECK constraints | `override_requires_reason`, `rating_range` — verified rejecting bad rows |
 | Central error mapping | Prisma/Postgres codes → RFC-7807-ish problem responses |
 | zod `validate()` middleware | runs before handlers (§7) |
-| Test harness against real Postgres | vitest + supertest, no mocked Prisma (§9) |
-| Lint rule enforcing the §1 architecture | Prisma client importable only from `src/repositories/**` |
-| `compose.yaml`, `Dockerfile`, CI workflow | |
 | **Authentication (D3)** | `POST /auth/login`, `GET /auth/me`, `requireAuth` / `requireRole`, actor context |
-| **User seed** | 7 accounts, idempotent; the entrypoint now runs it when `SEED=true` |
-| **OpenAPI + Swagger UI** | `/docs` and `/openapi.json`, generated from the zod schemas `validate()` enforces |
+| **Scoped repositories + field sets (D4)** | the §1 answer: two `select` objects per entity, the assignment check inside the `where` |
+| **Stage machine (D5)** | one writer of `currentStage`; advance, override, `StageTransition` + `AuditEvent` in one transaction |
+| **Rounds, assignments, feedback (D6)** | one feedback row per (round, interviewer), enforced by a unique index |
+| **Concurrency tests (D7)** | the three §5 cases, real HTTP, `Promise.all`, against real Postgres |
+| **Pipeline + ageing (D8)** | `GET /pipeline` — one grouped aggregate, no candidate row reaches Node |
+| **Scale dataset + query plans (D9)** | `npm run db:seed:scale`, [docs/query-plans.md](docs/query-plans.md) |
+| **Reqs, applications, audit trail** | `GET`/`POST /roles`, `POST /applications`, `GET /audit/candidates/:id` (§8) |
+| Seed fixture | 7 accounts, 3 reqs, 15 candidates, 17 applications, 10 rounds, a deliberate assignment graph |
+| OpenAPI + Swagger UI | `/docs` and `/openapi.json`, generated from the zod schemas `validate()` enforces |
+| 173 tests | vitest + supertest, no mocked Prisma anywhere (§9) |
 
-Not built yet: scoped repositories and field-set selects (D4), the stage machine (D5),
-and everything in week 2. The seed creates **users only** — roles, candidates, rounds
-and assignments land with the features that read them.
+### The endpoints
+
+| | Recruiter | Hiring manager | Interviewer |
+|---|---|---|---|
+| `POST /auth/login`, `GET /auth/me` | ✓ | ✓ | ✓ |
+| `GET /roles`, `POST /roles` | all reqs / open one | own reqs / — | — |
+| `POST /applications` | ✓ | — | — |
+| `PATCH /applications/:candidateId/:roleId/stage` | ✓ | — | — |
+| `POST /applications/:candidateId/:roleId/override` | **only** | — | — |
+| `GET /pipeline` | all open reqs | own reqs | — |
+| `GET /candidates/:id` | full record | — | assigned only, no contact details |
+| `POST /rounds`, `POST /rounds/:id/assignments` | ✓ | — | — |
+| `GET /rounds/:id` | ✓ | — | assigned only |
+| `GET /me/rounds` | — | — | ✓ |
+| `POST /rounds/:id/feedback` | — | — | own rounds |
+| `GET /rounds/:id/feedback` | ✓ | — | assigned only |
+| `GET /audit/candidates/:id` | any candidate | own reqs, no payloads | — |
+
+Not built yet: the §8 stretch items — Postgres RLS + column GRANTs (layer 3), the "stuck
+beyond N days" view — and closing a req. Candidates themselves are still seeded rather
+than created through the API; `POST /applications` takes a candidate id.
 
 ## Prerequisites
 
@@ -130,6 +154,8 @@ CI, where the workflow starts a `postgres:16` service.
 ```
 docs/
   authentication.md          the auth flow, end to end (D3)
+  query-plans.md             EXPLAIN (ANALYZE, BUFFERS) for the pipeline aggregate (D9)
+  query-plans.sql            the two statements that document measures, ready to run
 prisma/
   schema.prisma              the domain model (§2)
   migrations/                init migration + the raw CHECK constraints
@@ -167,8 +193,10 @@ kept across reloads, which matters when it expires every 15 minutes.
 **The spec is generated, never written.** `registerOperation` sits next to each route and
 takes the *same* zod object that `validate()` rejects bad input with, so the documented
 request body cannot describe something the API does not enforce — see
-[src/http/openapi/registry.ts](src/http/openapi/registry.ts). Adding a route in D4 without
-documenting it is a visible omission in the same diff, not a silent gap.
+[src/http/openapi/registry.ts](src/http/openapi/registry.ts). Adding a route without
+documenting it is a visible omission in the same diff, not a silent gap — and
+`tests/openapi.test.ts` asserts the exact set of documented paths, so it is also a
+failing test.
 
 Response schemas are the one half zod does not enforce at runtime — nothing validates an
 outgoing body. Those are pinned by [tests/openapi.test.ts](tests/openapi.test.ts), which
@@ -236,24 +264,28 @@ curl -s -i localhost:4000/auth/me | head -1
 
 ### Authorization
 
-`requireRole(...)` mounts on top of `requireAuth`. The matrix the rest of the API will be
-built against (PLAN.md §3, §4):
+`requireRole(...)` mounts on top of `requireAuth`. The matrix the API is built against
+(PLAN.md §3, §4) — see **The endpoints** above for the per-route view:
 
 | | Interviewer | Recruiter | Hiring manager |
 |---|---|---|---|
-| Candidate contact details | **never** | yes | — (stretch) |
-| Candidate / round by ID | only if assigned, else 404 | yes | own roles |
+| Candidate contact details | **never** | yes | never |
+| Candidate / round by ID | only if assigned, else 404 | yes | — |
 | Submit feedback | own rounds | — | — |
+| Read a round's feedback | only if assigned | yes | — |
 | Advance a stage | — | yes | — |
 | Override a stage | — | **yes, only** | — |
-| Audit timeline | — | yes | yes |
+| Pipeline view | — | all open reqs | own reqs |
+| Audit timeline | — | yes | own reqs, without event payloads |
 
 Two status codes are chosen deliberately and are asserted by test:
 
 - **403 for a wrong role**, because the existence of a route like `POST /roles` is not a
   secret — the caller simply is not a recruiter.
 - **404, not 403, for an out-of-scope resource** (§4). A 403 would confirm the record
-  exists. That one lands with the scoped repositories in D4.
+  exists. An unassigned interviewer asking for a candidate by id gets the same body as
+  one asking for a candidate that was never there, and the two are byte-identical by
+  test.
 
 ### Decisions taken building it
 
@@ -343,4 +375,3 @@ Each of these was a question PLAN.md left open or a constraint the toolchain imp
   Prisma CLI. This project is Postgres-only, so that driver is never loaded; the only
   offered fix is downgrading to Prisma 6, which reintroduces the v7 schema differences.
   Left as-is deliberately — revisit when Prisma updates the dependency.
-# recruitment-platform

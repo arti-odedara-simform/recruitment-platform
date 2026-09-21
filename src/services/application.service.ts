@@ -1,8 +1,10 @@
 import { Stage, TransitionKind, UserRole } from '@prisma/client';
-import { ForbiddenError } from '../errors/AppError.js';
+import { BadRequestError, ForbiddenError, NotFoundError } from '../errors/AppError.js';
 import { assertCanAdvance, assertCanOverride } from '../domain/stageMachine.js';
 import {
+  createApplication as createApplicationRow,
   runStageTransition,
+  type ApplicationStageView,
   type StageTransitionResult,
 } from '../repositories/application.repository.js';
 import type { Actor } from '../domain/actor.js';
@@ -21,6 +23,35 @@ import type { Actor } from '../domain/actor.js';
 export interface TransitionTarget {
   candidateId: string;
   roleId: string;
+}
+
+/**
+ * Puts a candidate onto a req, at APPLIED. Recruiters only — the same authority that
+ * moves an application between stages is the one that starts it, and a candidate
+ * appearing on a req is a pipeline decision, not a side effect of anything else.
+ *
+ * A CLOSED req is a 400 with the field named, matching how `assignInterviewer` refuses a
+ * target whose role is wrong: the request is well-formed but names something that cannot
+ * accept it.
+ */
+export async function createApplication(
+  actor: Actor,
+  target: TransitionTarget,
+): Promise<ApplicationStageView> {
+  assertStageAuthority(actor);
+
+  const result = await createApplicationRow(actor, target);
+
+  switch (result.outcome) {
+    case 'CREATED':
+      return result.application;
+    case 'NO_SUCH_ROLE':
+      throw new NotFoundError('No such req.');
+    case 'ROLE_CLOSED':                                                                                        
+      throw new BadRequestError(`"${result.title}" is closed and takes no new candidates.`, [
+        { path: 'body.roleId', message: 'must be an OPEN req' },
+      ]);
+  }
 }
 
 /** PLAN.md §5: feedback never advances a stage. Recruiters advance, explicitly. */

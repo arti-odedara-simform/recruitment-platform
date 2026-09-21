@@ -93,14 +93,17 @@ describe('the OpenAPI document', () => {
     expect(response.status).toBe(200);
     expect(response.body.openapi).toBe('3.1.0');
     expect(Object.keys(response.body.paths).sort()).toEqual([
+      '/applications',
       '/applications/{candidateId}/{roleId}/override',
       '/applications/{candidateId}/{roleId}/stage',
+      '/audit/candidates/{id}',
       '/auth/login',
       '/auth/me',
       '/candidates/{id}',
       '/health',
       '/me/rounds',
       '/pipeline',
+      '/roles',
       '/rounds',
       '/rounds/{id}',
       '/rounds/{id}/assignments',
@@ -165,6 +168,7 @@ describe('the OpenAPI document', () => {
     // The named models are shared, not re-inlined per route.
     expect(Object.keys(document.components.schemas).sort()).toEqual([
       'ApplicationStage',
+      'CandidateAudit',
       'CandidateInterviewerView',
       'CandidateRecruiterView',
       'CreatedRound',
@@ -176,9 +180,12 @@ describe('the OpenAPI document', () => {
       'PipelineStage',
       'Problem',
       'PublicUser',
+      'Role',
       'Round',
       'StageTransition',
       'StageTransitionResult',
+      'TimelineEvent',
+      'TimelineTransition',
     ]);
   });
 
@@ -393,6 +400,76 @@ describe('documented response shapes match real responses', () => {
       .set('authorization', interviewerAuth);
     expect(panel.status).toBe(200);
     expect(() => documentedSchema('/rounds/:id/feedback', 'get', 200).parse(panel.body)).not.toThrow();
+  });
+
+  it('POST /applications 201 and GET /audit/candidates/:id 200', async () => {
+    const login = await request(app)
+      .post('/auth/login')
+      .send({ email: RECRUITER_EMAIL, password: DEV_PASSWORD });
+    const auth = `Bearer ${login.body.token}`;
+
+    const hiringManager = await prisma.user.findFirstOrThrow({
+      where: { role: UserRole.HIRING_MANAGER },
+      select: { id: true },
+    });
+    await prisma.role.upsert({
+      where: { id: CONTRACT_ROLE_ID },
+      create: { id: CONTRACT_ROLE_ID, title: 'Contract Test Role', hiringManagerId: hiringManager.id },
+      update: {},
+    });
+    const candidate = await prisma.candidate.create({
+      data: {
+        name: `Contract Test Applicant ${(contractSequence += 1)}`,
+        email: `${CONTRACT_CANDIDATE_PREFIX}.applicant.${contractSequence}@example.net`,
+      },
+      select: { id: true },
+    });
+
+    const created = await request(app)
+      .post('/applications')
+      .set('authorization', auth)
+      .send({ candidateId: candidate.id, roleId: CONTRACT_ROLE_ID });
+
+    expect(created.status).toBe(201);
+    expect(() => documentedSchema('/applications', 'post', 201).parse(created.body)).not.toThrow();
+
+    const audit = await request(app)
+      .get(`/audit/candidates/${candidate.id}`)
+      .set('authorization', auth);
+
+    expect(audit.status).toBe(200);
+    expect(() =>
+      documentedSchema('/audit/candidates/:id', 'get', 200).parse(audit.body),
+    ).not.toThrow();
+    expect(audit.body.timeline.length).toBeGreaterThan(0);
+  });
+
+  it('GET /roles 200 and POST /roles 201', async () => {
+    const login = await request(app)
+      .post('/auth/login')
+      .send({ email: RECRUITER_EMAIL, password: DEV_PASSWORD });
+    const auth = `Bearer ${login.body.token}`;
+
+    const hiringManager = await prisma.user.findFirstOrThrow({
+      where: { role: UserRole.HIRING_MANAGER },
+      select: { id: true },
+    });
+
+    const created = await request(app)
+      .post('/roles')
+      .set('authorization', auth)
+      .send({ title: 'Contract Test Opened Req', hiringManagerId: hiringManager.id });
+
+    expect(created.status).toBe(201);
+    expect(() => documentedSchema('/roles', 'post', 201).parse(created.body)).not.toThrow();
+
+    const listed = await request(app).get('/roles').set('authorization', auth);
+
+    expect(listed.status).toBe(200);
+    expect(() => documentedSchema('/roles', 'get', 200).parse(listed.body)).not.toThrow();
+
+    await prisma.auditEvent.deleteMany({ where: { entityId: created.body.id } });
+    await prisma.role.deleteMany({ where: { id: created.body.id } });
   });
 
   it('GET /pipeline 200 — recruiter and hiring-manager scopes', async () => {

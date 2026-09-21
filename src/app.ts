@@ -2,10 +2,12 @@ import express, { type Express } from 'express';
 import helmet from 'helmet';
 import { healthRouter } from './http/routes/health.js';
 import { applicationsRouter } from './http/routes/applications.js';
+import { auditRouter } from './http/routes/audit.js';
 import { authRouter } from './http/routes/auth.js';
 import { candidatesRouter } from './http/routes/candidates.js';
 import { docsRouter } from './http/routes/docs.js';
 import { pipelineRouter } from './http/routes/pipeline.js';
+import { rolesRouter } from './http/routes/roles.js';
 import { roundsRouter } from './http/routes/rounds.js';
 import { errorHandler, notFoundHandler } from './http/middleware/errorHandler.js';
 import { env } from './config/env.js';
@@ -56,6 +58,8 @@ export function createApp(): Express {
   app.use(applicationsRouter);
   app.use(roundsRouter);
   app.use(pipelineRouter);
+  app.use(rolesRouter);
+  app.use(auditRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

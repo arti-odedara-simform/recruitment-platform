@@ -57,13 +57,20 @@ export interface PipelineFilter {
  * publishes, so days are what the database is asked for.
  *
  * `count(...)::int` keeps it out of BigInt — count is int8 by default, and a JSON
- * serialiser meeting a BigInt throws.
+ * serialiser meeting a BigInt throws. It counts `a."roleId"`, not `a."id"`, and that is
+ * a deliberate one-word difference: both are NULL only on the LEFT JOIN's empty-req row,
+ * so the number is identical, but `id` is not in the index and `roleId` is. Counting
+ * `id` forces a heap fetch for every row and the best plan available becomes an Index
+ * Scan at 19 999 buffers; counting `roleId` leaves the whole statement inside
+ * `(roleId, currentStage, currentStageEnteredAt)` and an Index *Only* Scan at 706 is on
+ * the table — and on the `?roleId=` path it is the difference between 125 buffers and 9.
+ * Measured both ways in docs/query-plans.md.
  */
 const SELECT_LIST = Prisma.sql`
   SELECT r."id"    AS "roleId",
          r."title" AS "title",
          a."currentStage" AS "stage",
-         count(a."id")::int AS "candidates",
+         count(a."roleId")::int AS "candidates",
          (avg(EXTRACT(EPOCH FROM ((now() AT TIME ZONE 'UTC') - a."currentStageEnteredAt"))) / 86400)::double precision AS "averageAgeDays",
          (max(EXTRACT(EPOCH FROM ((now() AT TIME ZONE 'UTC') - a."currentStageEnteredAt"))) / 86400)::double precision AS "oldestAgeDays"
 `;

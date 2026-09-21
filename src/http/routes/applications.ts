@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { Stage, TransitionKind, UserRole } from '@prisma/client';
 import { body, params, validate } from '../middleware/validate.js';
 import { actorOf, requireAuth, requireRole } from '../middleware/auth.js';
-import { advance, override } from '../../services/application.service.js';
+import { advance, createApplication, override } from '../../services/application.service.js';
 import { ALLOWED, MIN_OVERRIDE_REASON_LENGTH } from '../../domain/stageMachine.js';
 import { registerOperation } from '../openapi/registry.js';
 import { PROBLEM_RESPONSES } from '../openapi/schemas.js';
@@ -79,6 +79,66 @@ const transitionSchema = z
 const transitionResultSchema = z
   .strictObject({ application: applicationSchema, transition: transitionSchema })
   .meta({ id: 'StageTransitionResult' });
+
+// ---------------------------------------------------------------------------
+// POST /applications
+// ---------------------------------------------------------------------------
+
+const createApplicationSchema = z.object({
+  candidateId: z.uuid(),
+  roleId: z.uuid().meta({ description: 'Must be an OPEN req.' }),
+});
+
+type CreateApplicationBody = z.infer<typeof createApplicationSchema>;
+
+registerOperation({
+  method: 'post',
+  path: '/applications',
+  tags: ['Applications'],
+  summary: 'Put a candidate onto a req',
+  description:
+    'The pipeline unit comes into existence here, at `APPLIED`. Every later stage is ' +
+    'the stage machine’s business (PLAN.md §3), so there is no `stage` input.\n\n' +
+    'Only two things are checked in application code: that the req exists, and that it ' +
+    'is OPEN — both inside the transaction. A candidate who does not exist is refused ' +
+    'by the foreign key (404) and a candidate already on this req by the unique index ' +
+    '(409), rather than by a read-then-write with a window in it (PLAN.md §5, §7).\n\n' +
+    'No `StageTransition` row: there is no stage it moved *from*. The creation is ' +
+    'recorded as an `AuditEvent` in the same transaction, and ' +
+    '`GET /audit/candidates/:id` merges it into the timeline ahead of the transitions ' +
+    'that follow.',
+  request: { body: createApplicationSchema },
+  responses: [
+    { status: 201, description: 'The candidate is on the req, at APPLIED.', schema: applicationSchema },
+    {
+      ...PROBLEM_RESPONSES.badRequest,
+      description: 'The req is CLOSED, among the usual shape failures.',
+    },
+    PROBLEM_RESPONSES.unauthorized,
+    { ...PROBLEM_RESPONSES.forbidden, description: 'Recruiters only (PLAN.md §3).' },
+    {
+      status: 404,
+      description: 'No such req, or no such candidate.',
+      schema: PROBLEM_RESPONSES.unauthorized.schema,
+    },
+    {
+      status: 409,
+      description: 'That candidate is already on that req.',
+      schema: PROBLEM_RESPONSES.unauthorized.schema,
+    },
+  ],
+});
+
+applicationsRouter.post(
+  '/applications',
+  requireAuth,
+  requireRole(UserRole.RECRUITER),
+  validate({ body: createApplicationSchema }),
+  async (req: Request, res: Response) => {
+    const input = body<CreateApplicationBody>(req);
+    res.status(201).json(await createApplication(actorOf(req), input));
+  },
+);
 
 /** The 422 an illegal move produces, carrying the legal set (PLAN.md §3). */
 const invalidTransitionResponse = {
