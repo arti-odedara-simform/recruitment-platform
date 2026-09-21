@@ -3,8 +3,12 @@ import { ForbiddenError } from '../errors/AppError.js';
 import {
   aggregatePipelineForHiringManager,
   aggregatePipelineForRecruiter,
+  findStuckForHiringManager,
+  findStuckForRecruiter,
   type PipelineCell,
   type PipelineFilter,
+  type StuckApplication,
+  type StuckFilter,
 } from '../repositories/pipeline.repository.js';
 import type { Actor } from '../domain/actor.js';
 
@@ -89,4 +93,40 @@ function toSummaries(cells: PipelineCell[]): PipelineRoleSummary[] {
 
 function round(value: number | null): number {
   return Math.round((value ?? 0) * 10) / 10;
+}
+
+// ---------------------------------------------------------------------------
+// "Stuck beyond N days" (PLAN.md §4, §8)
+// ---------------------------------------------------------------------------
+
+export interface StuckView extends Omit<StuckApplication, 'currentStageEnteredAt'> {
+  currentStageEnteredAt: Date;
+  /** Days in the current stage, one decimal — the number the threshold was applied to. */
+  daysInStage: number;
+}
+
+/**
+ * The same role split as the aggregate, for the same reason: the scope belongs in the
+ * query. Computing `daysInStage` here rather than in SQL is free — these rows are already
+ * materialised, which is the one thing that separates this endpoint from the §6 view.
+ */
+export async function getStuck(actor: Actor, filter: StuckFilter): Promise<StuckView[]> {
+  const rows = await readStuckFor(actor, filter);
+  const now = Date.now();
+
+  return rows.map((row) => ({
+    ...row,
+    daysInStage: Math.round(((now - row.currentStageEnteredAt.getTime()) / 86_400_000) * 10) / 10,
+  }));
+}
+
+function readStuckFor(actor: Actor, filter: StuckFilter): Promise<StuckApplication[]> {
+  switch (actor.role) {
+    case UserRole.RECRUITER:
+      return findStuckForRecruiter(actor, filter);
+    case UserRole.HIRING_MANAGER:
+      return findStuckForHiringManager(actor, filter);
+    case UserRole.INTERVIEWER:
+      throw new ForbiddenError('The pipeline view is not available to interviewers.');
+  }
 }

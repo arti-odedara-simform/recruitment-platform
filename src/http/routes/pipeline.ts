@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { Stage, UserRole } from '@prisma/client';
 import { query, validate } from '../middleware/validate.js';
 import { actorOf, requireAuth, requireRole } from '../middleware/auth.js';
-import { getPipeline } from '../../services/pipeline.service.js';
+import { getPipeline, getStuck } from '../../services/pipeline.service.js';
 import { registerOperation } from '../openapi/registry.js';
 import { PROBLEM_RESPONSES } from '../openapi/schemas.js';
 
@@ -86,5 +86,85 @@ pipelineRouter.get(
   validate({ query: pipelineQuery }),
   async (req: Request, res: Response) => {
     res.status(200).json(await getPipeline(actorOf(req), query<PipelineQuery>(req)));
+  },
+);
+
+// ---------------------------------------------------------------------------
+// GET /pipeline/stuck
+// ---------------------------------------------------------------------------
+
+const DEFAULT_DAYS = 14;
+const DEFAULT_LIMIT = 100;
+
+const stuckQuery = z.object({
+  days: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(365)
+    .default(DEFAULT_DAYS)
+    .meta({ description: `Days in the current stage to count as stuck. Default ${DEFAULT_DAYS}.` }),
+  roleId: z.uuid().optional().meta({ description: 'Narrow to one open req.' }),
+  limit: z.coerce.number().int().min(1).max(500).default(DEFAULT_LIMIT),
+});
+
+type StuckQuery = z.infer<typeof stuckQuery>;
+
+const stuckSchema = z
+  .strictObject({
+    applicationId: z.uuid(),
+    candidate: z.strictObject({ id: z.uuid(), name: z.string() }),
+    roleId: z.uuid(),
+    roleTitle: z.string(),
+    currentStage: z.enum(Stage),
+    currentStageEnteredAt: z.iso.datetime(),
+    daysInStage: z.number(),
+  })
+  .meta({
+    id: 'StuckApplication',
+    description:
+      'The candidate carries `id` and `name` only — a recruiter reads contact details ' +
+      'from `GET /candidates/:id`, and a hiring manager may not read them at all.',
+  });
+
+registerOperation({
+  method: 'get',
+  path: '/pipeline/stuck',
+  tags: ['Pipeline'],
+  summary: 'Applications sitting in one stage longer than N days',
+  description:
+    'The counterpart to `GET /pipeline`: that one answers *how many*, this one answers ' +
+    '*which*, so it returns rows — bounded by `limit`, oldest first.\n\n' +
+    '**HIRED and REJECTED are excluded.** A candidate hired six months ago is not stuck, ' +
+    'they are done; terminal stages have no exit in the stage machine, so an ageing ' +
+    'clock on them measures nothing anyone can act on. Closed reqs are excluded for the ' +
+    'same reason they are absent from the aggregate.\n\n' +
+    'Scoped like the aggregate: recruiters see every open req, hiring managers only ' +
+    'their own, and the restriction is a predicate in the same query. Rides the ' +
+    '`(currentStage, currentStageEnteredAt)` index, which is worth about 3x at a '+
+    'selective threshold and is ignored at a loose one — see docs/query-plans.md §4.',
+  request: { query: stuckQuery },
+  responses: [
+    {
+      status: 200,
+      description: 'Stuck applications, longest-waiting first.',
+      schema: z.array(stuckSchema),
+    },
+    PROBLEM_RESPONSES.badRequest,
+    PROBLEM_RESPONSES.unauthorized,
+    {
+      ...PROBLEM_RESPONSES.forbidden,
+      description: 'Interviewers have no pipeline view (PLAN.md §4).',
+    },
+  ],
+});
+
+pipelineRouter.get(
+  '/pipeline/stuck',
+  requireAuth,
+  requireRole(UserRole.RECRUITER, UserRole.HIRING_MANAGER),
+  validate({ query: stuckQuery }),
+  async (req: Request, res: Response) => {
+    res.status(200).json(await getStuck(actorOf(req), query<StuckQuery>(req)));
   },
 );

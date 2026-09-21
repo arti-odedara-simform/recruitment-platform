@@ -26,7 +26,7 @@ complete enough to build a pipeline through, not only to read a seeded one.
 | **Reqs, applications, audit trail** | `GET`/`POST /roles`, `POST /applications`, `GET /audit/candidates/:id` (§8) |
 | Seed fixture | 7 accounts, 3 reqs, 15 candidates, 17 applications, 10 rounds, a deliberate assignment graph |
 | OpenAPI + Swagger UI | `/docs` and `/openapi.json`, generated from the zod schemas `validate()` enforces |
-| 222 tests | vitest + supertest, no mocked Prisma anywhere (§9), including the §9 sweeps at 20 000 candidates |
+| 239 tests | vitest + supertest, no mocked Prisma anywhere (§9), including the §9 sweeps at 20 000 candidates |
 
 ### The endpoints
 
@@ -38,6 +38,7 @@ complete enough to build a pipeline through, not only to read a seeded one.
 | `PATCH /applications/:candidateId/:roleId/stage` | ✓ | — | — |
 | `POST /applications/:candidateId/:roleId/override` | **only** | — | — |
 | `GET /pipeline` | all open reqs | own reqs | — |
+| `GET /pipeline/stuck?days=N` | all open reqs | own reqs | — |
 | `GET /candidates/:id` | full record | — | assigned only, no contact details |
 | `POST /rounds`, `POST /rounds/:id/assignments` | ✓ | — | — |
 | `GET /rounds/:id` | ✓ | — | assigned only |
@@ -46,7 +47,9 @@ complete enough to build a pipeline through, not only to read a seeded one.
 | `GET /rounds/:id/feedback` | ✓ | — | assigned only |
 | `GET /audit/candidates/:id` | any candidate | own reqs, no payloads | — |
 
-Not built yet: the "stuck beyond N days" view (§8) and closing a req. Candidates themselves are still seeded rather
+**Every route in PLAN.md §4 is built.** Not built, and not in the plan: closing a req,
+and creating a candidate — `POST /applications` takes a candidate id, and candidates are
+seeded (§13 puts intake out of scope). Candidates themselves are still seeded rather
 than created through the API; `POST /applications` takes a candidate id.
 
 ## Prerequisites

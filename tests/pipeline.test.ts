@@ -4,7 +4,7 @@ import { RoleStatus, Stage, UserRole } from '@prisma/client';
 import { createApp } from '../src/app.js';
 import { prisma, disconnectDatabase } from '../src/db/client.js';
 import { hashPassword } from '../src/auth/password.js';
-import { DEV_PASSWORD, ROLE_IDS, USER_IDS } from '../src/seed/fixture.js';
+import { APPLICATION_IDS, DEV_PASSWORD, ROLE_IDS, USER_IDS } from '../src/seed/fixture.js';
 
 /**
  * PLAN.md §6 — the pipeline view. The seeded fixture was built for these assertions:
@@ -294,5 +294,123 @@ describe('the aggregate is computed in Postgres', () => {
 
     const applications = await prisma.application.count();
     expect(applications).toBeGreaterThan(cells);
+  });
+});
+
+/**
+ * PLAN.md §4 and §8 — "stuck beyond N days". The seeded `daysInStage` spread is what
+ * makes this testable without building anything: rows sit at 1, 3, 4, 6, 9, 12, 21 and
+ * 45 days, on both sides of any threshold, and two of the oldest are deliberately in
+ * terminal stages or on a closed req so the exclusions have something to exclude.
+ */
+describe('GET /pipeline/stuck', () => {
+  interface StuckRow {
+    applicationId: string;
+    candidate: { id: string; name: string };
+    roleId: string;
+    roleTitle: string;
+    currentStage: Stage;
+    daysInStage: number;
+  }
+
+  function stuck(email: string | undefined, queryString = '') {
+    const call = request(app).get(`/pipeline/stuck${queryString}`);
+    return email ? call.set('authorization', `Bearer ${tokens[email]}`) : call;
+  }
+
+  /**
+   * At ten days the fixture has exactly three: a02 (21 days, INTERVIEW), a12 (15,
+   * APPLIED) and a04 (12, SCREEN) — longest wait first.
+   *
+   * Everything older that is *not* here is the point of the test: a09 has been HIRED for
+   * 45 days, a08 REJECTED for 30, and a17 has waited 20 days on a CLOSED req.
+   */
+  it('lists what is past the threshold, longest wait first', async () => {
+    const response = await stuck(RECRUITER, '?days=10');
+
+    expect(response.status).toBe(200);
+    const rows: StuckRow[] = response.body;
+
+    expect(rows.map((row) => row.applicationId)).toEqual([
+      APPLICATION_IDS.a02,
+      APPLICATION_IDS.a12,
+      APPLICATION_IDS.a04,
+    ]);
+    expect(rows[0]).toMatchObject({
+      currentStage: Stage.INTERVIEW,
+      roleTitle: 'Senior Backend Engineer',
+      candidate: { name: 'Bruno Costa' },
+    });
+    expect(rows[0]?.daysInStage).toBeCloseTo(21, 1);
+  });
+
+  it('excludes terminal stages — hired is not stuck, it is done', async () => {
+    const ids = ((await stuck(RECRUITER, '?days=1')).body as StuckRow[]).map((r) => r.applicationId);
+
+    expect(ids).not.toContain(APPLICATION_IDS.a09); // HIRED, 45 days
+    expect(ids).not.toContain(APPLICATION_IDS.a08); // REJECTED, 30 days
+    expect(ids).toContain(APPLICATION_IDS.a02);
+  });
+
+  it('excludes closed reqs, as the aggregate does', async () => {
+    const ids = ((await stuck(RECRUITER, '?days=1')).body as StuckRow[]).map((r) => r.applicationId);
+
+    expect(ids).not.toContain(APPLICATION_IDS.a16);
+    expect(ids).not.toContain(APPLICATION_IDS.a17);
+  });
+
+  it('narrows by req, and returns nothing at an unreachable threshold', async () => {
+    const platform: StuckRow[] = (await stuck(RECRUITER, `?days=10&roleId=${ROLE_IDS.platform}`)).body;
+    expect(platform.map((row) => row.applicationId)).toEqual([APPLICATION_IDS.a12]);
+
+    expect((await stuck(RECRUITER, '?days=365')).body).toEqual([]);
+  });
+
+  it('caps the result with limit', async () => {
+    const rows: StuckRow[] = (await stuck(RECRUITER, '?days=1&limit=2')).body;
+
+    expect(rows).toHaveLength(2);
+    // Still the oldest two, not an arbitrary two.
+    expect(rows[0]?.applicationId).toBe(APPLICATION_IDS.a02);
+  });
+
+  it('defaults to 14 days when none is given', async () => {
+    const rows: StuckRow[] = (await stuck(RECRUITER)).body;
+
+    expect(rows.map((row) => row.applicationId)).toEqual([
+      APPLICATION_IDS.a02,
+      APPLICATION_IDS.a12,
+    ]);
+  });
+
+  it('scopes a hiring manager to their own reqs', async () => {
+    const hers: StuckRow[] = (await stuck(HIRING_MANAGER, '?days=10')).body;
+    expect(hers.map((row) => row.applicationId)).toContain(APPLICATION_IDS.a02);
+
+    // Owns no req in the fixture, so nothing is stuck for them.
+    expect((await stuck(OTHER_MANAGER, '?days=1')).body).toEqual([]);
+  });
+
+  it('names no contact details', async () => {
+    const response = await stuck(RECRUITER, '?days=1');
+
+    expect(response.text).not.toMatch(/@example\.net/);
+    expect(response.text).not.toMatch(/\+\d[\d ]{6,}/);
+  });
+
+  it.each(['?days=0', '?days=nope', '?days=400', '?limit=0', '?limit=501'])(
+    '400s %s',
+    async (queryString) => {
+      emitted.length = 0;
+      const response = await stuck(RECRUITER, queryString);
+
+      expect(response.status).toBe(400);
+      expect(emitted).toEqual([]);
+    },
+  );
+
+  it('403s an interviewer and 401s an anonymous caller', async () => {
+    expect((await stuck(INTERVIEWER, '?days=10')).status).toBe(403);
+    expect((await stuck(undefined, '?days=10')).status).toBe(401);
   });
 });

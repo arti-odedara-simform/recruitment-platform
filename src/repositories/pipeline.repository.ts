@@ -1,4 +1,4 @@
-import { Prisma, type Stage } from '@prisma/client';
+import { Prisma, RoleStatus, Stage } from '@prisma/client';
 import { prisma } from '../db/client.js';
 import type { Actor } from '../domain/actor.js';
 
@@ -136,4 +136,102 @@ export async function aggregatePipelineForHiringManager(
   ];
 
   return aggregate(Prisma.join(predicates, ' AND '));
+}
+
+// ---------------------------------------------------------------------------
+// "Stuck beyond N days" (PLAN.md §4, §8)
+// ---------------------------------------------------------------------------
+
+/**
+ * The one pipeline endpoint that returns rows rather than an aggregate — its whole
+ * purpose is to name the applications nobody has touched — so it goes through the ORM
+ * rather than raw SQL, and it is bounded by `take` instead of by the shape of the data.
+ *
+ * It rides the *other* §2 index, `(currentStage, currentStageEnteredAt)`, which the
+ * §6 aggregate never uses: this query filters on stage and age across every open req at
+ * once, which is exactly the access pattern that index was added for. See
+ * docs/query-plans.md §4.
+ */
+export interface StuckApplication {
+  applicationId: string;
+  candidate: { id: string; name: string };
+  roleId: string;
+  roleTitle: string;
+  currentStage: Stage;
+  currentStageEnteredAt: Date;
+}
+
+export interface StuckFilter extends PipelineFilter {
+  /** Applications whose current stage was entered more than this many days ago. */
+  days: number;
+  /** Hard ceiling on rows. The route caps it; this is the last line of defence. */
+  limit: number;
+}
+
+/**
+ * HIRED and REJECTED are excluded, and that is a domain statement rather than a
+ * convenience: a candidate who was hired six months ago is not "stuck", they are done.
+ * Terminal stages have no exit in the stage machine, so an ageing clock on them measures
+ * nothing anyone can act on.
+ *
+ * Note the threshold is computed in Node and bound as a parameter, where the §6 aggregate
+ * has to say `now() AT TIME ZONE 'UTC'`. Same trap, avoided differently: a JS `Date`
+ * crosses the wire as an absolute instant, so there is no session time zone involved to
+ * get wrong.
+ */
+const ACTIVE_STAGES = [Stage.APPLIED, Stage.SCREEN, Stage.INTERVIEW, Stage.OFFER];
+
+const MS_PER_DAY = 86_400_000;
+
+function stuckWhere(filter: StuckFilter, scope: Prisma.RoleWhereInput): Prisma.ApplicationWhereInput {
+  return {
+    currentStage: { in: ACTIVE_STAGES },
+    currentStageEnteredAt: { lt: new Date(Date.now() - filter.days * MS_PER_DAY) },
+    role: {
+      status: RoleStatus.OPEN,
+      ...(filter.roleId ? { id: filter.roleId } : {}),
+      ...scope,
+    },
+  };
+}
+
+async function findStuck(where: Prisma.ApplicationWhereInput, limit: number): Promise<StuckApplication[]> {
+  const rows = await prisma.application.findMany({
+    where,
+    select: {
+      id: true,
+      currentStage: true,
+      currentStageEnteredAt: true,
+      // Id and name only. A recruiter may read contact details elsewhere; a hiring
+      // manager may not read them at all, and this endpoint serves both.
+      candidate: { select: { id: true, name: true } },
+      role: { select: { id: true, title: true } },
+    },
+    orderBy: { currentStageEnteredAt: 'asc' },
+    take: limit,
+  });
+
+  return rows.map((row) => ({
+    applicationId: row.id,
+    candidate: row.candidate,
+    roleId: row.role.id,
+    roleTitle: row.role.title,
+    currentStage: row.currentStage,
+    currentStageEnteredAt: row.currentStageEnteredAt,
+  }));
+}
+
+export async function findStuckForRecruiter(
+  _actor: Actor,
+  filter: StuckFilter,
+): Promise<StuckApplication[]> {
+  return findStuck(stuckWhere(filter, {}), filter.limit);
+}
+
+/** Same predicate plus ownership, in the same query — see the note on the aggregate. */
+export async function findStuckForHiringManager(
+  actor: Actor,
+  filter: StuckFilter,
+): Promise<StuckApplication[]> {
+  return findStuck(stuckWhere(filter, { hiringManagerId: actor.id }), filter.limit);
 }

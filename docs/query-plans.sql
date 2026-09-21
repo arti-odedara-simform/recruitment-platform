@@ -61,3 +61,31 @@ LEFT JOIN "Application" a ON a."roleId" = r."id"
 WHERE r."status" = 'OPEN'::"RoleStatus" AND r."id" = :'busiest'
 GROUP BY r."id", r."title", a."currentStage"
 ORDER BY r."title", a."currentStage";
+
+\echo ''
+\echo '=== Q3 — GET /pipeline/stuck?days=N (rows, not an aggregate) ==='
+\echo '--- loose threshold: most of the table matches, the index is ignored'
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT "Application"."id", "Application"."currentStage"::text, "Application"."currentStageEnteredAt",
+       "Application"."candidateId", "Application"."roleId"
+FROM "Application"
+LEFT JOIN "Role" AS "j0" ON "j0"."id" = "Application"."roleId"
+WHERE "Application"."currentStage" IN ('APPLIED','SCREEN','INTERVIEW','OFFER')
+  AND "Application"."currentStageEnteredAt" < (now() AT TIME ZONE 'UTC') - interval '30 days'
+  AND "j0"."status" = 'OPEN' AND "j0"."id" IS NOT NULL
+ORDER BY "Application"."currentStageEnteredAt" ASC
+LIMIT 100 OFFSET 0;
+
+\echo '--- selective threshold: few rows match, the index is used'
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT "Application"."id", "Application"."currentStage"::text, "Application"."currentStageEnteredAt",
+       "Application"."candidateId", "Application"."roleId"
+FROM "Application"
+LEFT JOIN "Role" AS "j0" ON "j0"."id" = "Application"."roleId"
+WHERE "Application"."currentStage" IN ('APPLIED','SCREEN','INTERVIEW','OFFER')
+  AND "Application"."currentStageEnteredAt" < (now() AT TIME ZONE 'UTC') - interval '110 days'
+  AND "j0"."status" = 'OPEN' AND "j0"."id" IS NOT NULL
+ORDER BY "Application"."currentStageEnteredAt" ASC
+LIMIT 100 OFFSET 0;

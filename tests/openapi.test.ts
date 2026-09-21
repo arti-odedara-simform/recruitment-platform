@@ -103,6 +103,7 @@ describe('the OpenAPI document', () => {
       '/health',
       '/me/rounds',
       '/pipeline',
+      '/pipeline/stuck',
       '/roles',
       '/rounds',
       '/rounds/{id}',
@@ -184,6 +185,7 @@ describe('the OpenAPI document', () => {
       'Round',
       'StageTransition',
       'StageTransitionResult',
+      'StuckApplication',
       'TimelineEvent',
       'TimelineTransition',
     ]);
@@ -485,6 +487,20 @@ describe('documented response shapes match real responses', () => {
       expect(() => schema.parse(response.body), `as ${email}`).not.toThrow();
       expect(response.body.length, `as ${email}`).toBeGreaterThan(0);
     }
+  });
+
+  it('GET /pipeline/stuck 200', async () => {
+    const login = await request(app)
+      .post('/auth/login')
+      .send({ email: RECRUITER_EMAIL, password: DEV_PASSWORD });
+
+    const response = await request(app)
+      .get('/pipeline/stuck?days=1')
+      .set('authorization', `Bearer ${login.body.token}`);
+
+    expect(response.status).toBe(200);
+    expect(() => documentedSchema('/pipeline/stuck', 'get', 200).parse(response.body)).not.toThrow();
+    expect(response.body.length).toBeGreaterThan(0);
   });
 
   it('GET /health 200', async () => {

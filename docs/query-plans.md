@@ -1,7 +1,8 @@
 # Query plans — the pipeline aggregate at 20 000 candidates
 
-What `GET /pipeline` actually does in the database, measured. D9 of [PLAN.md](../PLAN.md)
-§11, against the §8 scale dataset.
+What the pipeline endpoints actually do in the database, measured. D9 of
+[PLAN.md](../PLAN.md) §11, against the §8 scale dataset, with §4 added when
+`GET /pipeline/stuck` shipped.
 
 [PLAN.md](../PLAN.md) §6 makes two claims about this endpoint. This document checks both:
 
@@ -169,7 +170,60 @@ realistic spread of owners it behaves like Q2.
 
 ---
 
-## 4. What this changed in the code
+## 4. Q3 — the stuck view, and the second index
+
+`GET /pipeline/stuck?days=N` is the other half of the pipeline view: the aggregate says
+*how many*, this says *which*. It is also the only reason the second index from
+PLAN.md §2 — `(currentStage, currentStageEnteredAt)` — exists, and §6 of this document
+previously said to measure it once the endpoint shipped, or drop it. So:
+
+```sql
+SELECT … FROM "Application"
+LEFT JOIN "Role" j0 ON j0."id" = "Application"."roleId"
+WHERE "Application"."currentStage" IN ('APPLIED','SCREEN','INTERVIEW','OFFER')
+  AND "Application"."currentStageEnteredAt" < (now() AT TIME ZONE 'UTC') - interval 'N days'
+  AND j0."status" = 'OPEN'
+ORDER BY "Application"."currentStageEnteredAt" ASC
+LIMIT 100;
+```
+
+The answer depends entirely on how selective the threshold is, and the generated dataset
+spreads ageing evenly over 120 days, which lets both ends be measured:
+
+| Threshold | Rows matched | With the index | Without it |
+|---|---|---|---|
+| `?days=30` | 13 632 / 21 951 — 62% | 9.5 ms, Bitmap Index Scan, 487 buffers | 9.7 ms, Seq Scan, 465 buffers |
+| `?days=110` | ~1 500 / 21 951 — 7% | **1.5 ms**, Bitmap Index Scan, 457 buffers | 7.2 ms, Seq Scan, 465 buffers |
+
+Both plans finish with a `top-N heapsort` for the `ORDER BY … LIMIT 100`, and the `"Role"`
+side is a sequential scan of 177 rows either way.
+
+Two things to read out of that.
+
+**At a loose threshold the index is used and buys nothing.** The planner picks a bitmap
+scan, then reads two thirds of the table through it and touches *more* buffers than the
+sequential scan would (487 vs 465) — 9.5 ms against 9.7 ms is noise on a warm cache. A
+predicate matching most of a table is not something an index can help with, and this is
+what that looks like when the planner tries anyway.
+
+**At a selective threshold it is worth about 5x**, and that is the query the endpoint
+exists to answer: *who has been waiting an unreasonable length of time*. Note where the
+win comes from — buffers barely move (457 vs 465), because 1 500 rows scattered across
+the table still touch most of its pages. What the index removes is the CPU of testing
+21 951 rows to find them, not the I/O.
+
+**Verdict: keep it.** It pays at exactly the thresholds that make the endpoint
+interesting, and at the thresholds where it does not pay it costs about a percent.
+
+One caveat on reproducing these: the numbers above were taken after a `REINDEX`-fresh
+build of the index and an `ANALYZE`. An earlier capture on the same data, before the
+index was dropped and recreated, had the planner choosing a sequential scan at the loose
+threshold instead of a bitmap scan — same cost within noise, different plan. The
+selective-threshold result was stable across both.
+
+---
+
+## 5. What this changed in the code
 
 `count(a."id")` became `count(a."roleId")`.
 
@@ -198,7 +252,7 @@ option here: under a LEFT JOIN it returns 1 for a req with no applications inste
 
 ---
 
-## 5. Conclusions
+## 6. Conclusions
 
 1. **The §6 claim holds.** 21 951 rows in, 1 055 out, and the bound is
    `open reqs x stages` regardless of pipeline size. Asserted by test, too — see
@@ -208,16 +262,15 @@ option here: under a LEFT JOIN it returns 1 for a req with no applications inste
    query.** It does nothing for the unfiltered view and is worth 50x the I/O on the
    filtered one. Keep it.
 3. **`(currentStage, currentStageEnteredAt)`** — the second §2 index — is unused by both
-   queries here. It is there for the §8 "stuck beyond N days" view, which filters on
-   stage and age across all reqs. Measure it when that endpoint exists; if it ships
-   without one, drop the index.
+   queries above and earns its place in a third: `GET /pipeline/stuck`, measured in §4.
+   Keep it.
 4. **Ageing arithmetic is not free but is not the bottleneck either.** Two `EXTRACT`
    calls per row over 21 951 rows sit inside the 13 ms `HashAggregate`. If Q1 ever needs
    to be faster, that node — not the scan — is where to look, and a materialised rollup
    refreshed on stage change is the answer, at the cost of a stored value two concurrent
    transitions could disagree about. Not a trade worth making at 16 ms.
 
-## 6. What is not measured here
+## 7. What is not measured here
 
 The interviewer-scoping queries (`RoundAssignment_interviewerId_idx`), the audit timeline
 and the `GET /roles` listing. All are point lookups or small scans on indexed columns at
