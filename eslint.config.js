@@ -50,6 +50,7 @@ export default tseslint.config(
       'src/server.ts',
       'src/seed.ts',
       'src/seed-scale.ts',
+      'src/db-rls.ts',
     ],
     rules: {
       '@typescript-eslint/no-restricted-imports': 'off',

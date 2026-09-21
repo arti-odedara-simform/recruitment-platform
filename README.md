@@ -22,10 +22,11 @@ complete enough to build a pipeline through, not only to read a seeded one.
 | **Concurrency tests (D7)** | the three §5 cases, real HTTP, `Promise.all`, against real Postgres |
 | **Pipeline + ageing (D8)** | `GET /pipeline` — one grouped aggregate, no candidate row reaches Node |
 | **Scale dataset + query plans (D9)** | `npm run db:seed:scale`, [docs/query-plans.md](docs/query-plans.md) |
+| **RLS + column GRANTs (D12)** | `npm run db:rls` — interviewer reads run as a role Postgres will not show `email`/`phone` |
 | **Reqs, applications, audit trail** | `GET`/`POST /roles`, `POST /applications`, `GET /audit/candidates/:id` (§8) |
 | Seed fixture | 7 accounts, 3 reqs, 15 candidates, 17 applications, 10 rounds, a deliberate assignment graph |
 | OpenAPI + Swagger UI | `/docs` and `/openapi.json`, generated from the zod schemas `validate()` enforces |
-| 212 tests | vitest + supertest, no mocked Prisma anywhere (§9), including the §9 sweeps at 20 000 candidates |
+| 222 tests | vitest + supertest, no mocked Prisma anywhere (§9), including the §9 sweeps at 20 000 candidates |
 
 ### The endpoints
 
@@ -45,8 +46,7 @@ complete enough to build a pipeline through, not only to read a seeded one.
 | `GET /rounds/:id/feedback` | ✓ | — | assigned only |
 | `GET /audit/candidates/:id` | any candidate | own reqs, no payloads | — |
 
-Not built yet: the §8 stretch items — Postgres RLS + column GRANTs (layer 3), the "stuck
-beyond N days" view — and closing a req. Candidates themselves are still seeded rather
+Not built yet: the "stuck beyond N days" view (§8) and closing a req. Candidates themselves are still seeded rather
 than created through the API; `POST /applications` takes a candidate id.
 
 ## Prerequisites
@@ -118,6 +118,7 @@ value stops the process with a readable list rather than failing three layers do
 | `SEED` | `true` runs the seed on container boot |
 | `LOG_QUERIES` | `true` echoes every SQL statement Prisma emits — the walkthrough Q3 proof surface |
 | `ENABLE_DOCS` | serve `/docs` + `/openapi.json`. Defaults to on outside production, off in it |
+| `DB_RLS` | `auto` (default) \| `require` \| `off` — whether interviewer reads run as the `app_interviewer` role. `require` turns a missing role into a boot failure; compose sets it |
 
 `.env` drives local runs, `.env.test` drives the suite. Both are gitignored;
 `.env.example` is the template.
@@ -134,6 +135,7 @@ value stops the process with a readable list rather than failing three layers do
 | `npm run db:migrate` | `prisma migrate dev` — create and apply a migration |
 | `npm run db:deploy` | `prisma migrate deploy` — apply existing migrations |
 | `npm run db:seed` | create/refresh the seven development accounts (idempotent) |
+| `npm run db:rls` | install PLAN.md §1 layer 3 — the `app_interviewer` role, its column GRANTs and its row policies (idempotent; needs CREATE ROLE) |
 | `npm run db:seed:scale` | generate the §8 scale dataset — 200 reqs, 20 000 candidates, deterministic; `-- --clean` removes it |
 | `npm run db:reset` | drop, recreate, re-migrate |
 | `npm run db:studio` | Prisma Studio |
@@ -171,11 +173,13 @@ docs/
 prisma/
   schema.prisma              the domain model (§2)
   migrations/                init migration + the raw CHECK constraints
+  rls.sql                    layer 3: the app_interviewer role, GRANTs and policies (§1)
 prisma.config.ts             Prisma 7 config: where the CLI reads DATABASE_URL
 src/
   server.ts                  listener + graceful shutdown
   app.ts                     Express app factory (no listener, so tests can drive it)
   seed.ts                    development accounts (§10) — idempotent, prints the logins
+  db-rls.ts                  installs prisma/rls.sql — `npm run db:rls`
   config/env.ts              zod-validated environment
   db/client.ts               the single Prisma client — repositories only
   domain/actor.ts            the { id, role } every scoped repository takes (§1)
@@ -259,7 +263,10 @@ data.
 
 Password for all seven: `poc-dev-password`.
 
-### Walkthrough
+### A first call
+
+Everything below is one `curl`; the whole pipeline walkthrough is
+[further down](#walkthrough--the-whole-pipeline-in-curls).
 
 ```bash
 TOKEN=$(curl -s localhost:4000/auth/login \
@@ -335,6 +342,346 @@ Not built, and deliberately: no refresh tokens (re-login is one curl), no logout
 (the 15-minute TTL is the revocation story), no login rate limiting, and no `AuditEvent`
 on login — PLAN.md §8 scopes the audit trail to domain mutations. Each is a small
 addition if the walkthrough wants it.
+
+## Walkthrough — the whole pipeline in curls
+
+Every command below was run against `npm run dev` on a freshly seeded database, and every
+response is the real one, trimmed only where noted with `…`. Paste them in order.
+
+The seeded candidate ids are deterministic — `npm run db:seed` prints them, and they are
+the same on every machine:
+
+| | |
+|---|---|
+| Amara Osei (Ingrid **is** assigned) | `38856b51-8ae9-546b-88cd-acbc21b291c7` |
+| Bruno Costa (Ingrid is **not**) | `f6b046bd-78d7-5821-b2d0-cfc450b0ae08` |
+| Oskar Nowak (used below) | `fa50e31a-7b82-57bf-b32f-23a026af31b4` |
+
+### 0. Four tokens
+
+```bash
+API=localhost:4000; J='content-type: application/json'
+login() { curl -s $API/auth/login -H "$J" -d "{\"email\":\"$1\",\"password\":\"poc-dev-password\"}"; }
+
+RACHEL=$(login rachel.recruiter@example.com | jq -r .token)     # recruiter
+INGRID=$(login ingrid.interviewer@example.com | jq -r .token)   # interviewer
+IVAN=$(login ivan.interviewer@example.com | jq -r .token)       # interviewer
+HANA=$(login hana.manager@example.com | jq -r .token)           # hiring manager
+
+INGRID_ID=$(login ingrid.interviewer@example.com | jq -r .user.id)
+IVAN_ID=$(login ivan.interviewer@example.com | jq -r .user.id)
+HANA_ID=$(login hana.manager@example.com | jq -r .user.id)
+OSKAR=fa50e31a-7b82-57bf-b32f-23a026af31b4
+```
+
+### 1. Open a req, put a candidate on it
+
+```bash
+REQ=$(curl -s $API/roles -H "authorization: Bearer $RACHEL" -H "$J" \
+  -d "{\"title\":\"Staff Backend Engineer\",\"hiringManagerId\":\"$HANA_ID\"}")
+REQ_ID=$(echo "$REQ" | jq -r .id); echo "$REQ" | jq -c .
+```
+```json
+{"id":"288c8518-…","title":"Staff Backend Engineer","status":"OPEN","openedAt":"2026-09-21T12:09:49.937Z",
+ "hiringManager":{"id":"e42848d3-…","name":"Hana Suzuki"},"applicationCount":0}
+```
+
+```bash
+curl -s $API/applications -H "authorization: Bearer $RACHEL" -H "$J" \
+  -d "{\"candidateId\":\"$OSKAR\",\"roleId\":\"$REQ_ID\"}" | jq -c .
+```
+```json
+{"applicationId":"6bbeb74e-…","candidateId":"fa50e31a-…","roleId":"288c8518-…",
+ "currentStage":"APPLIED","currentStageEnteredAt":"2026-09-21T12:09:49.960Z"}
+```
+
+### 2. Advance a stage — and try an illegal one
+
+```bash
+curl -s -X PATCH $API/applications/$OSKAR/$REQ_ID/stage \
+  -H "authorization: Bearer $RACHEL" -H "$J" -d '{"toStage":"SCREEN"}' | jq -c .transition
+```
+```json
+{"id":"69831bea-…","fromStage":"APPLIED","toStage":"SCREEN","kind":"NORMAL","reason":null,
+ "actorId":"300c2087-…","occurredAt":"2026-09-21T12:09:49.972Z"}
+```
+
+Now skip two stages. **This is walkthrough answer Q1** — the refusal comes from
+[`src/domain/stageMachine.ts`](src/domain/stageMachine.ts), the only thing that decides
+legality, and the body carries the legal set:
+
+```bash
+curl -s -X PATCH $API/applications/$OSKAR/$REQ_ID/stage \
+  -H "authorization: Bearer $RACHEL" -H "$J" -d '{"toStage":"HIRED"}' | jq -c .
+```
+```json
+{"type":"https://httpstatuses.io/422","title":"Invalid Stage Transition","status":422,
+ "from":"SCREEN","to":"HIRED","allowed":["INTERVIEW","REJECTED"],
+ "detail":"SCREEN -> HIRED is not a legal transition."}
+```
+
+### 3. Override it, on the record
+
+**Walkthrough answer Q2.** Recruiters only, reason required, and the record names who:
+
+```bash
+curl -s $API/applications/$OSKAR/$REQ_ID/override -H "authorization: Bearer $RACHEL" -H "$J" \
+  -d '{"toStage":"OFFER","reason":"Panel unanimous after the screen; skipping the onsite."}' \
+  | jq -c .transition
+```
+```json
+{"id":"f871e6b5-…","fromStage":"SCREEN","toStage":"OFFER","kind":"OVERRIDE",
+ "reason":"Panel unanimous after the screen; skipping the onsite.",
+ "actorId":"300c2087-…","occurredAt":"2026-09-21T12:09:50.024Z"}
+```
+
+A short reason never reaches the database — and if the service layer were bypassed, the
+`override_requires_reason` CHECK would refuse the row anyway:
+
+```bash
+curl -s $API/applications/$OSKAR/$REQ_ID/override -H "authorization: Bearer $RACHEL" -H "$J" \
+  -d '{"toStage":"HIRED","reason":"too short"}' | jq -c .errors
+```
+```json
+[{"path":"body.reason","message":"must be at least 10 characters"}]
+```
+
+### 4. A round, and two interviewers on it
+
+```bash
+ROUND_ID=$(curl -s $API/rounds -H "authorization: Bearer $RACHEL" -H "$J" \
+  -d "{\"candidateId\":\"$OSKAR\",\"roleId\":\"$REQ_ID\",\"stage\":\"SCREEN\",\"scheduledAt\":\"2026-10-01T09:00:00.000Z\"}" \
+  | jq -r .id)
+
+for who in $INGRID_ID $IVAN_ID; do
+  curl -s -o /dev/null -w "assign %{http_code}\n" $API/rounds/$ROUND_ID/assignments \
+    -H "authorization: Bearer $RACHEL" -H "$J" -d "{\"interviewerId\":\"$who\"}"
+done      # assign 204 / assign 204
+```
+
+### 5. What an interviewer can see — walkthrough answer Q3
+
+```bash
+curl -s $API/candidates/$OSKAR -H "authorization: Bearer $INGRID" | jq -c .
+curl -s $API/candidates/$OSKAR -H "authorization: Bearer $RACHEL" | jq -c .
+```
+```json
+{"id":"fa50e31a-…","name":"Oskar Nowak"}
+{"id":"fa50e31a-…","name":"Oskar Nowak","email":"oskar.nowak@example.net","phone":"+48 22 000 0115","createdAt":"…"}
+```
+
+Same route, same candidate, two different queries — see
+[Contact details](#contact-details--excluded-at-the-query-not-filtered-after) below for the
+SQL each one emits. And a candidate Ingrid is not assigned to is a **404, not a 403**:
+
+```bash
+curl -s $API/candidates/f6b046bd-78d7-5821-b2d0-cfc450b0ae08 -H "authorization: Bearer $INGRID" | jq -c .
+```
+```json
+{"type":"https://httpstatuses.io/404","title":"Not Found","status":404,"detail":"No such candidate."}
+```
+
+Byte-identical to the body for a candidate id that was never issued. `GET /me/rounds`
+carries the same field set — no contact details anywhere on the interviewer path.
+
+### 6. Two panel members submitting at once
+
+```bash
+curl -s -o /dev/null -w "ingrid %{http_code}\n" $API/rounds/$ROUND_ID/feedback \
+  -H "authorization: Bearer $INGRID" -H "$J" -d '{"rating":4,"notes":"Strong systems answers."}' &
+curl -s -o /dev/null -w "ivan   %{http_code}\n" $API/rounds/$ROUND_ID/feedback \
+  -H "authorization: Bearer $IVAN" -H "$J" -d '{"rating":3,"notes":"Solid, some gaps on concurrency."}' &
+wait      # ingrid 201 / ivan 201 — both kept, neither merged
+```
+
+Ingrid submitting a second time is refused, not silently updated:
+
+```json
+{"type":"https://httpstatuses.io/409","title":"Conflict","status":409,"detail":"That record already exists."}
+```
+
+And the round's outcome is derived on read, never stored:
+
+```bash
+curl -s $API/rounds/$ROUND_ID -H "authorization: Bearer $RACHEL" | jq -c '{feedbackCount, ratings}'
+# {"feedbackCount":2,"ratings":[3,4]}
+```
+
+### 7. The pipeline, and the trail
+
+```bash
+curl -s "$API/pipeline?roleId=$REQ_ID" -H "authorization: Bearer $RACHEL" | jq -c .
+```
+```json
+[{"roleId":"288c8518-…","title":"Staff Backend Engineer","totalCandidates":1,
+  "stages":[{"stage":"OFFER","candidates":1,"averageAgeDays":0,"oldestAgeDays":0}]}]
+```
+
+```bash
+curl -s $API/audit/candidates/$OSKAR -H "authorization: Bearer $RACHEL" \
+  | jq -c '.timeline[] | {type, action, kind, reason, actor: .actor.name}'
+```
+```json
+{"type":"AUDIT_EVENT","action":"APPLICATION_CREATED","actor":"Rachel Ahmed"}
+{"type":"STAGE_TRANSITION","kind":"NORMAL","reason":null,"actor":"Rachel Ahmed"}
+{"type":"AUDIT_EVENT","action":"STAGE_ADVANCED","actor":"Rachel Ahmed"}
+{"type":"STAGE_TRANSITION","kind":"OVERRIDE","reason":"Panel unanimous after the screen; skipping the onsite.","actor":"Rachel Ahmed"}
+{"type":"AUDIT_EVENT","action":"STAGE_OVERRIDDEN","actor":"Rachel Ahmed"}
+{"type":"AUDIT_EVENT","action":"ROUND_CREATED","actor":"Rachel Ahmed"}
+{"type":"AUDIT_EVENT","action":"ASSIGNMENT_CREATED","actor":"Rachel Ahmed"}
+{"type":"AUDIT_EVENT","action":"ASSIGNMENT_CREATED","actor":"Rachel Ahmed"}
+{"type":"AUDIT_EVENT","action":"FEEDBACK_SUBMITTED","actor":"Ingrid Olsen"}
+{"type":"AUDIT_EVENT","action":"FEEDBACK_SUBMITTED","actor":"Ivan Petrov"}
+```
+
+Ten rows, every one written inside the transaction that made the change. Hana reads the
+same trail for her own req — with the `payload` field absent, so the ratings she is
+refused by `GET /rounds/:id/feedback` do not arrive through the back door.
+
+### Tearing it down
+
+The walkthrough leaves one req behind. `npm run db:reset && npm run db:seed` puts the
+fixture back, or delete the req — applications, rounds and transitions cascade.
+
+## Concurrent feedback — the decision
+
+> Two interviewers submit feedback for the same round at the same moment. What happens?
+
+**Both submissions are kept. Feedback is per `(round, interviewer)`, never merged, never
+overwritten — and a second submission by the *same* interviewer is refused with 409, not
+silently applied.**
+
+The rule is a `@@unique([roundId, interviewerId])` index, and the insert is a plain
+`INSERT` that does not read first. That is the whole mechanism:
+
+- **Two different interviewers, simultaneously** → two 201s, two rows. They were never in
+  competition; they are writing different rows.
+- **The same interviewer twice, simultaneously** → exactly one 201 and one 409. Postgres
+  picks the winner; `23505` maps to 409 in the central error handler.
+- **There is no read-then-write anywhere on this path**, so there is no window between
+  "does feedback exist?" and "write it" for a second request to slip into. A check-then-
+  insert version would pass a single-threaded test and lose a row under load.
+
+The round's outcome — `feedbackCount`, `ratings[]` — is **derived on every read**, never
+a stored column. A stored rollup is a mutable field two panel members can clobber; a
+count of the rows that exist cannot be. And feedback never advances a stage: recruiters
+do that, explicitly, so the concurrency surface stays one table.
+
+Asserted by [tests/rounds.test.ts](tests/rounds.test.ts) with real HTTP and `Promise.all`,
+including the three-interviewers-plus-a-recruiter-override case, which also asserts that
+exactly one `StageTransition` exists afterwards and that `currentStage` agrees with it —
+the `SELECT … FOR UPDATE` on the application row serialises the override against any
+concurrent transition.
+
+## Contact details — excluded at the query, not filtered after
+
+> When an interviewer's request returns candidate data, are contact details ever in the
+> row Postgres handed back to Node?
+
+**No.** Two hard-coded field sets in
+[candidate.repository.ts](src/repositories/candidate.repository.ts) —
+`CANDIDATE_SELECT.recruiter` names `email` and `phone`, `CANDIDATE_SELECT.interviewer`
+does not name them at all — and the role picks the *query*, before the read, not the
+fields to keep after it.
+
+Run the server with `LOG_QUERIES=true` and make the same request as each role. This is the
+actual emitted SQL, reformatted only for line length:
+
+```sql
+-- as an interviewer: no email, no phone, and the assignment check is IN the where
+SELECT "Candidate"."id", "Candidate"."name"
+FROM "Candidate"
+WHERE "Candidate"."id" = $1
+  AND EXISTS (SELECT "t0"."candidateId" FROM "Application" AS "t0"
+              WHERE EXISTS (SELECT "t1"."applicationId" FROM "InterviewRound" AS "t1"
+                            WHERE EXISTS (SELECT "t2"."roundId" FROM "RoundAssignment" AS "t2"
+                                          WHERE "t2"."interviewerId" = $2 AND …)
+                              AND …)
+                AND …)
+LIMIT $3 OFFSET $4
+-- params: ["38856b51-…", "5846d715-…", "1", "0"]
+
+-- as a recruiter: the full record
+SELECT "Candidate"."id", "Candidate"."name", "Candidate"."email",
+       "Candidate"."phone", "Candidate"."createdAt"
+FROM "Candidate" WHERE "Candidate"."id" = $1 LIMIT $2 OFFSET $3
+```
+
+Three things follow from the first statement, and all three are the point:
+
+1. **The restricted columns are not in the result set**, so they never enter process
+   memory on an interviewer request. There is nothing for a serializer to forget to strip.
+2. **The authorization is the `EXISTS` chain**, not an `if` after the fetch. An
+   unassigned candidate returns zero rows — the refusal happens in the database.
+3. **Zero rows becomes a 404**, and "no such candidate" and "not yours" are therefore
+   indistinguishable from outside. A 403 would confirm the record exists.
+
+There is deliberately no `findCandidate(id)` in that repository. Adding one would make the
+wide shape reachable, and the design rests on it not being. A lint rule
+(`no-restricted-imports` on `src/db/client.ts` outside `src/repositories/**`) stops a route
+handler from going around the repository to write one.
+
+Enforced by three tests pulling in different directions:
+[tests/candidates.test.ts](tests/candidates.test.ts) asserts on the emitted SQL itself,
+the strict response schemas in [tests/openapi.test.ts](tests/openapi.test.ts) fail if an
+extra field ever appears, and [tests/access.test.ts](tests/access.test.ts) scans every
+interviewer-reachable response — successes, 403s, 404s and 400s — as raw text for an
+address or a phone number.
+
+### Layer 3 — and the database refuses too
+
+Everything above is application code. [prisma/rls.sql](prisma/rls.sql) adds the layer
+underneath it: a second role, `app_interviewer`, that is granted
+`SELECT ("id", "name", "createdAt")` on `"Candidate"` and nothing else, plus a row policy
+keyed on the actor.
+
+```bash
+npm run db:rls        # idempotent; needs a database user that may CREATE ROLE
+```
+
+Interviewer reads then run as that role, for one transaction:
+
+```sql
+SELECT set_config('app.actor_id', $1, true);   -- who is asking
+SET LOCAL ROLE app_interviewer;                -- what they may see
+```
+
+Both say **LOCAL** for the reason PLAN.md §14 flagged: Prisma hands out pooled
+connections, and a `SET ROLE` without it would outlive the request and hand the next
+caller somebody else's identity. Postgres reverts both on COMMIT, so the blast radius is
+the transaction — which is also why every one of these reads goes through
+`$transaction`. There is no safe way to do it outside one.
+
+What that buys, demonstrable at a psql prompt:
+
+```console
+$ psql "$DATABASE_URL" -c 'SET ROLE app_interviewer; SELECT email FROM "Candidate" LIMIT 1;'
+ERROR:  permission denied for table Candidate
+```
+
+and, with a valid actor set, an **unfiltered** `SELECT "id" FROM "Candidate"` returns only
+the candidates that interviewer is assigned to — so if `findCandidateForInterviewer` lost
+its `where` clause tomorrow, the answer would not change. With no actor set it returns
+nothing at all: `current_setting('app.actor_id', true)` is NULL, the policy is false, and
+the failure direction is closed.
+
+Three notes on how it is wired, each of them a deliberate choice:
+
+- **It is not a Prisma migration.** `CREATE ROLE` is a cluster-level privilege that the
+  application's own database user does not have on a typical development machine, and a
+  migration that cannot run blocks work that has nothing to do with RLS. `compose.yaml`
+  runs the script on boot, where the app user owns the cluster.
+- **`DB_RLS=auto` degrades visibly, not silently.** Where the role is not installed the
+  API still works — layers 1 and 2 are unconditional — and `GET /health` reports
+  `"rls":"unavailable"` rather than looking identical to an environment where it is doing
+  its job. Compose sets `DB_RLS=require`, which turns a missing role into a boot failure.
+- **The table owner bypasses RLS**, so recruiter and hiring-manager reads, which run as
+  the application's own user, are untouched by the policies.
+
+[tests/rls.test.ts](tests/rls.test.ts) asserts all of this by asking Postgres directly as
+the role, never through the repository — an assertion routed through the code being proved
+unnecessary would prove nothing. Those tests install the role themselves and skip, with a
+message, on a database whose user may not create one.
 
 ## Architecture rules already enforced
 

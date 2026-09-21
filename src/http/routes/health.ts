@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { pingDatabase } from '../../repositories/health.repository.js';
+import { rlsStatus } from '../../repositories/rls.repository.js';
 import { registerOperation } from '../openapi/registry.js';
 
 export const healthRouter = Router();
@@ -10,6 +11,13 @@ const healthSchema = z
     status: z.enum(['ok', 'degraded']),
     database: z.enum(['up', 'down']),
     uptimeSeconds: z.int(),
+    rls: z.enum(['enforced', 'disabled', 'unavailable']).meta({
+      description:
+        'PLAN.md §1 layer 3. `enforced` — interviewer reads run as the `app_interviewer` ' +
+        'role, which has no GRANT on the restricted columns. `unavailable` — ' +
+        '`npm run db:rls` has not been run here, so layers 1 and 2 are carrying it ' +
+        'alone. `disabled` — switched off with DB_RLS=off.',
+    }),
   })
   .meta({ id: 'Health' });
 
@@ -36,9 +44,15 @@ registerOperation({
  */
 healthRouter.get('/health', async (_req: Request, res: Response) => {
   const databaseUp = await pingDatabase();
+
+  // Reported rather than assumed: an environment where layer 3 was never installed
+  // should say so out loud, not look identical to one where it is doing its job.
+  const rls = databaseUp ? await rlsStatus() : 'unavailable';
+
   res.status(databaseUp ? 200 : 503).json({
     status: databaseUp ? 'ok' : 'degraded',
     database: databaseUp ? 'up' : 'down',
     uptimeSeconds: Math.round(process.uptime()),
+    rls,
   });
 });

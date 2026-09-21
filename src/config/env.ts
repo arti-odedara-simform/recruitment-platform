@@ -31,6 +31,18 @@ const envSchema = z.object({
     .default('false')
     .transform((v) => v === 'true'),
   /**
+   * PLAN.md §1 layer 3: run interviewer reads as the `app_interviewer` role, which
+   * Postgres has stripped of `email`/`phone` and put behind a row policy.
+   *
+   * - `auto` (default) — use it where prisma/rls.sql has been run, carry on without it
+   *   where it has not. Layers 1 and 2 are unconditional, so "without it" is still
+   *   correct, merely thinner. `GET /health` reports which.
+   * - `require` — a missing layer 3 is a boot failure. For any deployment that has
+   *   decided the database must be the one refusing.
+   * - `off` — never switch role.
+   */
+  DB_RLS: z.enum(['auto', 'require', 'off']).default('auto'),
+  /**
    * Serve `GET /docs` and `GET /openapi.json`.
    *
    * These are anonymous routes, and PLAN.md §4 says there are exactly two of those. Left

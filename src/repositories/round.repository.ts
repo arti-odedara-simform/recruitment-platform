@@ -1,5 +1,6 @@
 import type { Stage } from '@prisma/client';
 import { prisma } from '../db/client.js';
+import { asInterviewer } from './rls.repository.js';
 import type { Actor } from '../domain/actor.js';
 import { CANDIDATE_SELECT } from './candidate.repository.js';
 
@@ -109,22 +110,30 @@ export async function findRoundForRecruiter(_actor: Actor, roundId: string): Pro
   return row ? toView(row) : null;
 }
 
-/** 404-by-zero-rows, same as `findCandidateForInterviewer`. */
+/**
+ * 404-by-zero-rows, same as `findCandidateForInterviewer` — and under the same layer-3
+ * role, because a round carries its candidate and is therefore a path to the restricted
+ * columns like any other.
+ */
 export async function findRoundForInterviewer(actor: Actor, roundId: string): Promise<RoundView | null> {
-  const row = await prisma.interviewRound.findFirst({
-    where: { id: roundId, ...assignedTo(actor) },
-    select: ROUND_SELECT.interviewer,
-  });
+  const row = await asInterviewer(actor, (db) =>
+    db.interviewRound.findFirst({
+      where: { id: roundId, ...assignedTo(actor) },
+      select: ROUND_SELECT.interviewer,
+    }),
+  );
   return row ? toView(row) : null;
 }
 
 /** `GET /me/rounds` — the list is the scope, so there is no "all rounds" variant to misuse. */
 export async function listRoundsForInterviewer(actor: Actor): Promise<RoundView[]> {
-  const rows = await prisma.interviewRound.findMany({
-    where: assignedTo(actor),
-    select: ROUND_SELECT.interviewer,
-    orderBy: { scheduledAt: 'asc' },
-  });
+  const rows = await asInterviewer(actor, (db) =>
+    db.interviewRound.findMany({
+      where: assignedTo(actor),
+      select: ROUND_SELECT.interviewer,
+      orderBy: { scheduledAt: 'asc' },
+    }),
+  );
   return rows.map(toView);
 }
 

@@ -1,4 +1,5 @@
 import { prisma } from '../db/client.js';
+import { asInterviewer } from './rls.repository.js';
 import type { Actor } from '../domain/actor.js';
 
 /**
@@ -82,12 +83,18 @@ export async function findCandidateForRecruiter(
  * `findFirst` rather than `findUnique`: a relation filter is not part of any unique
  * index, so Prisma will not accept it in `findUnique`'s `where`. The `id` equality still
  * makes the result at most one row.
+ *
+ * Wrapped in `asInterviewer` — layer 3. Where prisma/rls.sql has been installed this
+ * exact query runs as a role that has no GRANT on `email` or `phone` and a row policy
+ * that repeats the assignment check. The `select` and the `where` below are unchanged by
+ * that and would be correct without it; the role is there for the day one of them is
+ * edited wrongly.
  */
 export async function findCandidateForInterviewer(
   actor: Actor,
   candidateId: string,
 ): Promise<InterviewerCandidateView | null> {
-  return prisma.candidate.findFirst({
+  return asInterviewer(actor, (db) => db.candidate.findFirst({
     where: {
       id: candidateId,
       applications: {
@@ -103,5 +110,5 @@ export async function findCandidateForInterviewer(
       },
     },
     select: CANDIDATE_SELECT.interviewer,
-  });
+  }));
 }

@@ -34,6 +34,9 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev_only_secret_change_me_at_least_32_chars_long}
       SEED: ${SEED:-true}
       LOG_QUERIES: ${LOG_QUERIES:-false}
+      # The entrypoint installs layer 3 before this process starts, and the app user owns
+      # this cluster, so it is always available here — demand it rather than degrade.
+      DB_RLS: ${DB_RLS:-require}
       # NODE_ENV is production here, where docs default to off. The whole point of this
       # stack is that a reviewer can browse the API, so it is turned on deliberately.
       ENABLE_DOCS: ${ENABLE_DOCS:-true}
