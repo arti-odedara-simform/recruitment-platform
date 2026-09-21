@@ -70,10 +70,16 @@ async function givenApplication(): Promise<{ candidateId: string; roleId: string
 async function cleanupApplications(): Promise<void> {
   const candidates = await prisma.candidate.findMany({
     where: { email: { startsWith: CONTRACT_CANDIDATE_PREFIX } },
-    select: { applications: { select: { id: true } } },
+    select: { applications: { select: { id: true, rounds: { select: { id: true } } } } },
   });
   const applicationIds = candidates.flatMap((c) => c.applications.map((a) => a.id));
-  await prisma.auditEvent.deleteMany({ where: { entityId: { in: applicationIds } } });
+  const roundIds = candidates.flatMap((c) => c.applications.flatMap((a) => a.rounds.map((r) => r.id)));
+
+  // Feedback.roundId is RESTRICT, not CASCADE — see the note in tests/rounds.test.ts.
+  await prisma.feedback.deleteMany({ where: { roundId: { in: roundIds } } });
+  await prisma.auditEvent.deleteMany({
+    where: { entityId: { in: [...applicationIds, ...roundIds] } },
+  });
   await prisma.candidate.deleteMany({
     where: { email: { startsWith: CONTRACT_CANDIDATE_PREFIX } },
   });
@@ -92,6 +98,11 @@ describe('the OpenAPI document', () => {
       '/auth/me',
       '/candidates/{id}',
       '/health',
+      '/me/rounds',
+      '/rounds',
+      '/rounds/{id}',
+      '/rounds/{id}/assignments',
+      '/rounds/{id}/feedback',
     ]);
   });
 
@@ -154,10 +165,14 @@ describe('the OpenAPI document', () => {
       'ApplicationStage',
       'CandidateInterviewerView',
       'CandidateRecruiterView',
+      'CreatedRound',
+      'Feedback',
       'Health',
       'LoginResponse',
+      'PeerFeedback',
       'Problem',
       'PublicUser',
+      'Round',
       'StageTransition',
       'StageTransitionResult',
     ]);
@@ -315,6 +330,65 @@ describe('documented response shapes match real responses', () => {
     expect(() =>
       documentedSchema('/applications/:candidateId/:roleId/override', 'post', 200).parse(response.body),
     ).not.toThrow();
+  });
+
+  /**
+   * The round lifecycle end to end: create, assign, read, submit feedback, read the
+   * panel's. Each response is parsed against the shape the document publishes.
+   */
+  it('the round and feedback routes match their documented shapes', async () => {
+    const recruiter = await request(app)
+      .post('/auth/login')
+      .send({ email: RECRUITER_EMAIL, password: DEV_PASSWORD });
+    const interviewer = await request(app)
+      .post('/auth/login')
+      .send({ email: INTERVIEWER_EMAIL, password: DEV_PASSWORD });
+    const recruiterAuth = `Bearer ${recruiter.body.token}`;
+    const interviewerAuth = `Bearer ${interviewer.body.token}`;
+    const target = await givenApplication();
+
+    const created = await request(app)
+      .post('/rounds')
+      .set('authorization', recruiterAuth)
+      .send({
+        candidateId: target.candidateId,
+        roleId: target.roleId,
+        stage: 'INTERVIEW',
+        scheduledAt: new Date().toISOString(),
+      });
+    expect(created.status).toBe(201);
+    expect(() => documentedSchema('/rounds', 'post', 201).parse(created.body)).not.toThrow();
+
+    const assigned = await request(app)
+      .post(`/rounds/${created.body.id}/assignments`)
+      .set('authorization', recruiterAuth)
+      .send({ interviewerId: interviewer.body.user.id });
+    expect(assigned.status).toBe(204);
+
+    const round = await request(app)
+      .get(`/rounds/${created.body.id}`)
+      .set('authorization', interviewerAuth);
+    expect(round.status).toBe(200);
+    expect(() => documentedSchema('/rounds/:id', 'get', 200).parse(round.body)).not.toThrow();
+
+    const mine = await request(app).get('/me/rounds').set('authorization', interviewerAuth);
+    expect(mine.status).toBe(200);
+    expect(() => documentedSchema('/me/rounds', 'get', 200).parse(mine.body)).not.toThrow();
+
+    const submitted = await request(app)
+      .post(`/rounds/${created.body.id}/feedback`)
+      .set('authorization', interviewerAuth)
+      .send({ rating: 3, notes: 'Contract test feedback.' });
+    expect(submitted.status).toBe(201);
+    expect(() =>
+      documentedSchema('/rounds/:id/feedback', 'post', 201).parse(submitted.body),
+    ).not.toThrow();
+
+    const panel = await request(app)
+      .get(`/rounds/${created.body.id}/feedback`)
+      .set('authorization', interviewerAuth);
+    expect(panel.status).toBe(200);
+    expect(() => documentedSchema('/rounds/:id/feedback', 'get', 200).parse(panel.body)).not.toThrow();
   });
 
   it('GET /health 200', async () => {

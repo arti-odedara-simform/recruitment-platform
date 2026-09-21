@@ -182,7 +182,7 @@ model StageTransition {
 model AuditEvent {
   id         String   @id @default(uuid())
   actorId    String
-  /// FEEDBACK_SUBMITTED | ASSIGNMENT_CREATED | STAGE_ADVANCED | STAGE_OVERRIDDEN
+  /// ROUND_CREATED | ASSIGNMENT_CREATED | FEEDBACK_SUBMITTED | STAGE_ADVANCED | STAGE_OVERRIDDEN
   action     String
   entity     String
   entityId   String

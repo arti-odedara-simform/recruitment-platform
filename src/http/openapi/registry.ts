@@ -206,6 +206,12 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           'machine and leaves one trace (PLAN.md §3, §8).',
       },
       {
+        name: 'Rounds',
+        description:
+          'Interview rounds, who is assigned to them, and the feedback they collect. ' +
+          'One feedback row per (round, interviewer), enforced by the database (PLAN.md §5).',
+      },
+      {
         name: 'Candidates',
         description:
           'Scoped candidate reads. The field set follows the role, and the scope is in the ' +
