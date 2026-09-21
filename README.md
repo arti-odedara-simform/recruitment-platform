@@ -25,7 +25,7 @@ complete enough to build a pipeline through, not only to read a seeded one.
 | **Reqs, applications, audit trail** | `GET`/`POST /roles`, `POST /applications`, `GET /audit/candidates/:id` (§8) |
 | Seed fixture | 7 accounts, 3 reqs, 15 candidates, 17 applications, 10 rounds, a deliberate assignment graph |
 | OpenAPI + Swagger UI | `/docs` and `/openapi.json`, generated from the zod schemas `validate()` enforces |
-| 173 tests | vitest + supertest, no mocked Prisma anywhere (§9) |
+| 212 tests | vitest + supertest, no mocked Prisma anywhere (§9), including the §9 sweeps at 20 000 candidates |
 
 ### The endpoints
 
@@ -144,6 +144,18 @@ The suite runs against a **real** Postgres — no mocked Prisma anywhere (§9), 
 every graded behaviour (constraint violations, concurrency, query shape) only exists in
 the engine. `tests/globalSetup.ts` applies migrations to `.env.test`'s database before
 the first test and refuses to run unless that URL names a database with `test` in it.
+
+Two files sweep the API rather than one endpoint, both driven from something that
+cannot go stale ([tests/access.test.ts](tests/access.test.ts)): every route registered in
+the OpenAPI document is called without a token and must 401, and every
+interviewer-reachable response — successes, 403s, 404s and 400s alike — is scanned as raw
+text for a candidate's email or phone. A route added without a thought about auth fails
+the suite the moment it registers itself.
+
+[tests/scale.test.ts](tests/scale.test.ts) generates the §8 dataset — 200 reqs, 20 000
+candidates — asserts `GET /pipeline` answers well under a threshold and returns at most
+one row per (open req, stage), then removes it again. That is ~6 seconds of the suite's
+runtime and the reason `npm test` takes about half a minute.
 
 PLAN.md §14 flagged testcontainers as a risk. **Decided:** the fallback — a separate
 database name on the same Postgres. It runs identically on a laptop, in compose, and in
