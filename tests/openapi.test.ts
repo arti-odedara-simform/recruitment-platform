@@ -19,6 +19,7 @@ const EMAIL = 'openapi.test.recruiter@example.com';
 // to c01), which a freshly created user has no place in.
 const RECRUITER_EMAIL = 'rachel.recruiter@example.com';
 const INTERVIEWER_EMAIL = 'ingrid.interviewer@example.com';
+const HIRING_MANAGER_EMAIL = 'hana.manager@example.com';
 
 beforeAll(async () => {
   await prisma.user.deleteMany({ where: { email: EMAIL } });
@@ -99,6 +100,7 @@ describe('the OpenAPI document', () => {
       '/candidates/{id}',
       '/health',
       '/me/rounds',
+      '/pipeline',
       '/rounds',
       '/rounds/{id}',
       '/rounds/{id}/assignments',
@@ -170,6 +172,8 @@ describe('the OpenAPI document', () => {
       'Health',
       'LoginResponse',
       'PeerFeedback',
+      'PipelineRole',
+      'PipelineStage',
       'Problem',
       'PublicUser',
       'Round',
@@ -389,6 +393,21 @@ describe('documented response shapes match real responses', () => {
       .set('authorization', interviewerAuth);
     expect(panel.status).toBe(200);
     expect(() => documentedSchema('/rounds/:id/feedback', 'get', 200).parse(panel.body)).not.toThrow();
+  });
+
+  it('GET /pipeline 200 — recruiter and hiring-manager scopes', async () => {
+    const schema = documentedSchema('/pipeline', 'get', 200);
+
+    for (const email of [RECRUITER_EMAIL, HIRING_MANAGER_EMAIL]) {
+      const login = await request(app).post('/auth/login').send({ email, password: DEV_PASSWORD });
+      const response = await request(app)
+        .get('/pipeline')
+        .set('authorization', `Bearer ${login.body.token}`);
+
+      expect(response.status, `as ${email}`).toBe(200);
+      expect(() => schema.parse(response.body), `as ${email}`).not.toThrow();
+      expect(response.body.length, `as ${email}`).toBeGreaterThan(0);
+    }
   });
 
   it('GET /health 200', async () => {

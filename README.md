@@ -110,6 +110,7 @@ value stops the process with a readable list rather than failing three layers do
 | `npm run db:migrate` | `prisma migrate dev` — create and apply a migration |
 | `npm run db:deploy` | `prisma migrate deploy` — apply existing migrations |
 | `npm run db:seed` | create/refresh the seven development accounts (idempotent) |
+| `npm run db:seed:scale` | generate the §8 scale dataset — 200 reqs, 20 000 candidates, deterministic; `-- --clean` removes it |
 | `npm run db:reset` | drop, recreate, re-migrate |
 | `npm run db:studio` | Prisma Studio |
 

@@ -20,6 +20,7 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx src/seed.ts",
+    "db:seed:scale": "tsx src/seed-scale.ts",
     "db:reset": "prisma migrate reset",
     "db:studio": "prisma studio"
   },

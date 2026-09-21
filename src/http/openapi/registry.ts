@@ -217,6 +217,12 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           'Scoped candidate reads. The field set follows the role, and the scope is in the ' +
           'query rather than applied after it (PLAN.md §1).',
       },
+      {
+        name: 'Pipeline',
+        description:
+          'Counts and ageing per stage per open req, answered by one grouped aggregate ' +
+          'rather than by loading applications into the process (PLAN.md §6).',
+      },
       { name: 'Health', description: 'Liveness, including the database round-trip.' },
     ],
     components: {

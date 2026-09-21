@@ -39,16 +39,17 @@ export default tseslint.config(
     },
   },
   {
-    // The repositories are the sanctioned home of Prisma access. The two process
+    // The repositories are the sanctioned home of Prisma access. The process
     // entrypoints are exempt only because they own the pool lifecycle and need the
-    // disconnect helper: server.ts for graceful shutdown, seed.ts to close the pool
-    // when it finishes. Neither reads domain data through the client — the seed's
-    // writes go through src/repositories/seed.repository.ts like everything else.
+    // disconnect helper: server.ts for graceful shutdown, the two seed scripts to close
+    // the pool when they finish. None of them reads domain data through the client —
+    // their writes go through src/repositories/** like everything else.
     files: [
       'src/repositories/**/*.ts',
       'src/db/**/*.ts',
       'src/server.ts',
       'src/seed.ts',
+      'src/seed-scale.ts',
     ],
     rules: {
       '@typescript-eslint/no-restricted-imports': 'off',

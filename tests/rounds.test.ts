@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import request from 'supertest';
-import { Stage } from '@prisma/client';
+import { Stage, TransitionKind } from '@prisma/client';
 import { createApp } from '../src/app.js';
 import { prisma, disconnectDatabase } from '../src/db/client.js';
 import { DEV_PASSWORD } from '../src/seed/fixture.js';
@@ -402,6 +402,70 @@ describe('POST /rounds/:id/feedback — the concurrency rule', () => {
 
     expect(responses.map((r) => r.status).sort()).toEqual([201, 409]);
     expect(await prisma.feedback.count({ where: { roundId } })).toBe(1);
+  });
+
+  /**
+   * PLAN.md §5 case 3: the whole panel writing while a recruiter overrides the same
+   * candidate's stage. Four writers, two tables, one candidate, all in flight at once.
+   *
+   * The two halves cannot interfere by construction — feedback is guarded by
+   * `@@unique([roundId, interviewerId])` and the stage move by `SELECT ... FOR UPDATE`
+   * on the application row — and this is the test that says so rather than assuming it.
+   * Note what is asserted about the stage: *exactly one* transition, and a
+   * `currentStage` that agrees with its `toStage`. A stage that moved without a row, or
+   * a row without the move, is the failure this is looking for.
+   */
+  it('keeps the panel and a simultaneous recruiter override consistent', async () => {
+    const { roundId, candidateId } = await givenRound([
+      INTERVIEWER_A,
+      INTERVIEWER_B,
+      INTERVIEWER_C,
+    ]);
+
+    const panel = [INTERVIEWER_A, INTERVIEWER_B, INTERVIEWER_C].map((email, index) =>
+      request(app)
+        .post(`/rounds/${roundId}/feedback`)
+        .set(...auth(email))
+        .send({ rating: index + 1, notes: `Panel member ${index + 1}, written concurrently.` }),
+    );
+
+    // INTERVIEW -> HIRED, skipping OFFER: a real skip, so the override path is the one
+    // under test rather than a move `advance()` would also have allowed.
+    const overriding = request(app)
+      .post(`/applications/${candidateId}/${TEST_ROLE_ID}/override`)
+      .set(...auth(RECRUITER))
+      .send({ toStage: Stage.HIRED, reason: 'Panel unanimous; skipping the offer stage.' });
+
+    const [override, ...feedback] = await Promise.all([overriding, ...panel]);
+
+    expect(feedback.map((response) => response.status)).toEqual([201, 201, 201]);
+    expect(override.status).toBe(200);
+
+    expect(await prisma.feedback.count({ where: { roundId } })).toBe(3);
+
+    const transitions = await prisma.stageTransition.findMany({ where: { candidateId } });
+    expect(transitions).toHaveLength(1);
+    expect(transitions[0]?.kind).toBe(TransitionKind.OVERRIDE);
+
+    const application = await prisma.application.findFirstOrThrow({ where: { candidateId } });
+    expect(application.currentStage).toBe(transitions[0]?.toStage);
+    expect(application.currentStage).toBe(Stage.HIRED);
+
+    // PLAN.md §8: every one of those writes left a trace, in its own transaction.
+    const audit = await prisma.auditEvent.findMany({
+      where: { OR: [{ entityId: roundId }, { entityId: application.id }] },
+      select: { action: true },
+    });
+    expect(audit.map((event) => event.action).sort()).toEqual([
+      'ASSIGNMENT_CREATED',
+      'ASSIGNMENT_CREATED',
+      'ASSIGNMENT_CREATED',
+      'FEEDBACK_SUBMITTED',
+      'FEEDBACK_SUBMITTED',
+      'FEEDBACK_SUBMITTED',
+      'ROUND_CREATED',
+      'STAGE_OVERRIDDEN',
+    ]);
   });
 
   it('404s an interviewer who is not assigned, and an unknown round', async () => {
