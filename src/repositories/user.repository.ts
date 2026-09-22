@@ -1,5 +1,6 @@
 import type { UserRole } from '@prisma/client';
 import { prisma } from '../db/client.js';
+import type { Actor } from '../domain/actor.js';
 
 /**
  * Field sets, the same discipline PLAN.md §1 applies to candidates: two hard-coded
@@ -60,6 +61,29 @@ export async function findUserById(id: string): Promise<PublicUser | null> {
   return prisma.user.findUnique({
     where: { id },
     select: USER_SELECT.public,
+  });
+}
+
+/**
+ * The staff directory behind the assignment picker.
+ *
+ * `USER_SELECT.public` again, so `passwordHash` is not reachable from here either — and
+ * the `role` filter is a predicate rather than a filter over a wider read, for the same
+ * reason every other scoped read in this codebase puts it in the `where` (PLAN.md §1).
+ *
+ * Capped by `take`. A recruiter picking an interviewer needs a list they can read, not
+ * every account that has ever existed, and an unbounded list route is the kind of thing
+ * that is fine on a seeded POC and a table scan in production.
+ */
+export async function listUsers(
+  _actor: Actor,
+  filter: { role?: UserRole | undefined; limit: number },
+): Promise<PublicUser[]> {
+  return prisma.user.findMany({
+    where: filter.role ? { role: filter.role } : {},
+    select: USER_SELECT.public,
+    orderBy: { name: 'asc' },
+    take: filter.limit,
   });
 }
 

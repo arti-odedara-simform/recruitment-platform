@@ -95,6 +95,7 @@ describe('the OpenAPI document', () => {
     expect(Object.keys(response.body.paths).sort()).toEqual([
       '/applications',
       '/applications/{candidateId}/{roleId}/override',
+      '/applications/{candidateId}/{roleId}/rounds',
       '/applications/{candidateId}/{roleId}/stage',
       '/audit/candidates/{id}',
       '/auth/login',
@@ -109,6 +110,7 @@ describe('the OpenAPI document', () => {
       '/rounds/{id}',
       '/rounds/{id}/assignments',
       '/rounds/{id}/feedback',
+      '/users',
     ]);
   });
 
@@ -168,6 +170,7 @@ describe('the OpenAPI document', () => {
 
     // The named models are shared, not re-inlined per route.
     expect(Object.keys(document.components.schemas).sort()).toEqual([
+      'ApplicationListItem',
       'ApplicationStage',
       'CandidateAudit',
       'CandidateInterviewerView',
@@ -183,6 +186,7 @@ describe('the OpenAPI document', () => {
       'PublicUser',
       'Role',
       'Round',
+      'RoundAssignment',
       'StageTransition',
       'StageTransitionResult',
       'StuckApplication',
@@ -501,6 +505,79 @@ describe('documented response shapes match real responses', () => {
     expect(response.status).toBe(200);
     expect(() => documentedSchema('/pipeline/stuck', 'get', 200).parse(response.body)).not.toThrow();
     expect(response.body.length).toBeGreaterThan(0);
+  });
+
+  it('GET /applications 200 — recruiter and hiring-manager scopes', async () => {
+    const schema = documentedSchema('/applications', 'get', 200);
+
+    for (const email of [RECRUITER_EMAIL, HIRING_MANAGER_EMAIL]) {
+      const login = await request(app).post('/auth/login').send({ email, password: DEV_PASSWORD });
+      const response = await request(app)
+        .get('/applications')
+        .set('authorization', `Bearer ${login.body.token}`);
+
+      expect(response.status, `as ${email}`).toBe(200);
+      expect(() => schema.parse(response.body), `as ${email}`).not.toThrow();
+      expect(response.body.length, `as ${email}`).toBeGreaterThan(0);
+    }
+  });
+
+  it('GET /users 200', async () => {
+    const login = await request(app)
+      .post('/auth/login')
+      .send({ email: RECRUITER_EMAIL, password: DEV_PASSWORD });
+
+    const response = await request(app)
+      .get('/users?role=INTERVIEWER')
+      .set('authorization', `Bearer ${login.body.token}`);
+
+    expect(response.status).toBe(200);
+    expect(() => documentedSchema('/users', 'get', 200).parse(response.body)).not.toThrow();
+    expect(response.body.length).toBeGreaterThan(0);
+  });
+
+  /**
+   * The recruiter arm of the round view is the one that carries `assignments`, and the
+   * schema is strict — so a panel shape that drifts fails here rather than on the screen
+   * that renders it.
+   */
+  it('GET /applications/:candidateId/:roleId/rounds 200', async () => {
+    const login = await request(app)
+      .post('/auth/login')
+      .send({ email: RECRUITER_EMAIL, password: DEV_PASSWORD });
+    const auth = `Bearer ${login.body.token}`;
+    const interviewer = await prisma.user.findFirstOrThrow({
+      where: { role: UserRole.INTERVIEWER },
+      select: { id: true },
+    });
+    const target = await givenApplication();
+
+    const created = await request(app)
+      .post('/rounds')
+      .set('authorization', auth)
+      .send({
+        candidateId: target.candidateId,
+        roleId: target.roleId,
+        stage: 'INTERVIEW',
+        scheduledAt: new Date().toISOString(),
+      });
+    expect(created.status).toBe(201);
+
+    const assigned = await request(app)
+      .post(`/rounds/${created.body.id}/assignments`)
+      .set('authorization', auth)
+      .send({ interviewerId: interviewer.id });
+    expect(assigned.status).toBe(204);
+
+    const response = await request(app)
+      .get(`/applications/${target.candidateId}/${target.roleId}/rounds`)
+      .set('authorization', auth);
+
+    expect(response.status).toBe(200);
+    expect(() =>
+      documentedSchema('/applications/:candidateId/:roleId/rounds', 'get', 200).parse(response.body),
+    ).not.toThrow();
+    expect(response.body[0].assignments).toHaveLength(1);
   });
 
   it('GET /health 200', async () => {

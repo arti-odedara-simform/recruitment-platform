@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { UserRole } from '@prisma/client';
 
 /**
  * The RFC-7807-ish problem shape every error in this API serialises to (PLAN.md §4).
@@ -43,3 +44,20 @@ export const PROBLEM_RESPONSES = {
     schema: problemSchema,
   },
 } as const;
+
+/**
+ * The user shape that may leave the API — `passwordHash` is not in it (PLAN.md §1).
+ *
+ * It lives here rather than next to one of its routes because three of them now return
+ * it: `POST /auth/login`, `GET /auth/me` and `GET /users`. A second definition carrying
+ * the same `.meta({ id })` would overwrite the first in `components.schemas`, so the
+ * document would silently describe whichever route was registered last.
+ */
+export const publicUserSchema = z
+  .object({
+    id: z.uuid(),
+    email: z.email(),
+    name: z.string(),
+    role: z.enum(UserRole),
+  })
+  .meta({ id: 'PublicUser' });

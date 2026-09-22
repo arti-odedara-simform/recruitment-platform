@@ -26,7 +26,7 @@ complete enough to build a pipeline through, not only to read a seeded one.
 | **Reqs, applications, audit trail** | `GET`/`POST /roles`, `POST /applications`, `GET /audit/candidates/:id` (§8) |
 | Seed fixture | 7 accounts, 3 reqs, 15 candidates, 17 applications, 10 rounds, a deliberate assignment graph |
 | OpenAPI + Swagger UI | `/docs` and `/openapi.json`, generated from the zod schemas `validate()` enforces |
-| 239 tests | vitest + supertest, no mocked Prisma anywhere (§9), including the §9 sweeps at 20 000 candidates |
+| 254 tests | vitest + supertest, no mocked Prisma anywhere (§9), including the §9 sweeps at 20 000 candidates |
 
 ### The endpoints
 
@@ -34,6 +34,7 @@ complete enough to build a pipeline through, not only to read a seeded one.
 |---|---|---|---|
 | `POST /auth/login`, `GET /auth/me` | ✓ | ✓ | ✓ |
 | `GET /roles`, `POST /roles` | all reqs / open one | own reqs / — | — |
+| `GET /applications` | all reqs | own reqs | — |
 | `POST /applications` | ✓ | — | — |
 | `PATCH /applications/:candidateId/:roleId/stage` | ✓ | — | — |
 | `POST /applications/:candidateId/:roleId/override` | **only** | — | — |
@@ -41,16 +42,35 @@ complete enough to build a pipeline through, not only to read a seeded one.
 | `GET /pipeline/stuck?days=N` | all open reqs | own reqs | — |
 | `GET /candidates/:id` | full record | — | assigned only, no contact details |
 | `POST /rounds`, `POST /rounds/:id/assignments` | ✓ | — | — |
+| `GET /applications/:candidateId/:roleId/rounds` | ✓, panel included | — | — |
 | `GET /rounds/:id` | ✓ | — | assigned only |
 | `GET /me/rounds` | — | — | ✓ |
 | `POST /rounds/:id/feedback` | — | — | own rounds |
 | `GET /rounds/:id/feedback` | ✓ | — | assigned only |
 | `GET /audit/candidates/:id` | any candidate | own reqs, no payloads | — |
+| `GET /users` | ✓ | — | — |
 
-**Every route in PLAN.md §4 is built.** Not built, and not in the plan: closing a req,
-and creating a candidate — `POST /applications` takes a candidate id, and candidates are
-seeded (§13 puts intake out of scope). Candidates themselves are still seeded rather
-than created through the API; `POST /applications` takes a candidate id.
+**Every route in PLAN.md §4 is built.** Three reads go beyond it, added so the recruiter
+screens in `web/` could be built against the API rather than against the seed script:
+
+- `GET /applications` — the work queue. §4 has `GET /pipeline` (*how many*) and
+  `GET /pipeline/stuck` (*which are late*) but nothing that answers *who is on this req*.
+  Same scoping as both: recruiters see every req, hiring managers see their own by a
+  predicate in the same query, and the rows carry `{ id, name }` — no list endpoint in
+  this API selects a contact column.
+- `GET /applications/:candidateId/:roleId/rounds` — the rounds on one application, each
+  with its panel. `POST /rounds` returns an id and nothing else, so without this the only
+  way to find a round again is to have kept that response. Recruiter-only, and the panel
+  is on the recruiter field set alone: an interviewer who could read the roster would
+  learn who else is interviewing a candidate, which is what the assignment scope exists
+  to withhold.
+- `GET /users` — the picker behind "assign an interviewer" and "open a req", both of
+  which take a user id and verify the role they are handed. Recruiter-only for the same
+  reason.
+
+Not built, and not in the plan: closing a req, and creating a candidate — `POST
+/applications` takes a candidate id, and candidates are seeded (§13 puts intake out of
+scope).
 
 ## Prerequisites
 
@@ -732,9 +752,26 @@ Three decisions worth knowing:
   set by the API, with a CSRF story to match. Noted in
   [web/src/auth/session.tsx](web/src/auth/session.tsx) rather than left implicit.
 
-What it covers so far: login, the pipeline dashboard (counts and time-in-stage per open
-req, plus the "waiting too long" list with an adjustable threshold), and the req list
-with its status filter. Navigation hides links a role would only get a 403 from — a
+What it covers so far: login; the pipeline dashboard (counts and time-in-stage per open
+req, plus the "waiting too long" list with an adjustable threshold); the req list with
+its status filter; the interviewer's rounds and feedback form; and the recruiter path —
+
+- **Candidates** (`/candidates`) — one row per application, filtered by req, stage and
+  req status, longest-waiting first. Names and stages only, because that is all the
+  endpoint returns.
+- **The application screen** (`/applications/:candidateId/:roleId`) — a candidate on a
+  req, and everything a recruiter does to it: contact details (recruiter-only, read one
+  record at a time), stage advances as buttons for the legal moves, an override as a form
+  that will not submit without a reason, rounds with the panel already on each, a
+  scheduler, an interviewer picker, and the audit timeline underneath.
+
+A hiring manager reaches the same two screens and gets less on them: the sections they
+may not read are not rendered, so the request behind them is never made. The stage table
+in [web/src/domain/stages.ts](web/src/domain/stages.ts) exists only to decide which
+buttons to offer — the server refuses anything illegal with a 422 that carries the legal
+set, and the screen renders that set when it happens.
+
+Navigation hides links a role would only get a 403 from — a
 courtesy, not a security boundary, since the request still reaches the server and the
 server still refuses it. An interviewer signing in gets a plain "nothing here yet"
 panel rather than a red 403, because a 403 there is the authorization model working, not

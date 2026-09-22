@@ -5,6 +5,7 @@ import {
   createRound as createRoundRow,
   findRoundForInterviewer,
   findRoundForRecruiter,
+  listRoundsForApplication,
   listRoundsForInterviewer,
   type RoundView,
 } from '../repositories/round.repository.js';
@@ -45,6 +46,29 @@ export async function listMyRounds(actor: Actor): Promise<RoundView[]> {
     throw new ForbiddenError('Only interviewers have rounds of their own.');
   }
   return listRoundsForInterviewer(actor);
+}
+
+/**
+ * The rounds booked against one application, panel included — the read behind the
+ * recruiter's scheduling screen.
+ *
+ * Recruiters only. A hiring manager does not read rounds anywhere in this API, and an
+ * interviewer reading this one would get the roster for a candidate's every round,
+ * which is precisely what `GET /me/rounds` is scoped to avoid handing out.
+ */
+export async function listApplicationRounds(
+  actor: Actor,
+  target: { candidateId: string; roleId: string },
+): Promise<RoundView[]> {
+  assertRecruiter(actor, 'read the rounds for an application');
+
+  const rounds = await listRoundsForApplication(actor, target);
+
+  if (rounds === null) {
+    throw new NotFoundError('No application for that candidate and role.');
+  }
+
+  return rounds;
 }
 
 /**

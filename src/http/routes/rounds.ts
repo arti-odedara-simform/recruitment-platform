@@ -7,6 +7,7 @@ import {
   assignInterviewer,
   createRound,
   getRound,
+  listApplicationRounds,
   listMyRounds,
 } from '../../services/round.service.js';
 import { listFeedback, submitFeedback } from '../../services/feedback.service.js';
@@ -34,6 +35,14 @@ const candidateInRoundSchema = z.union([
   z.strictObject({ id: z.uuid(), name: z.string() }),
 ]);
 
+const roundAssignmentSchema = z
+  .strictObject({
+    interviewer: z.strictObject({ id: z.uuid(), name: z.string() }),
+    assignedBy: z.strictObject({ id: z.uuid(), name: z.string() }),
+    assignedAt: z.iso.datetime(),
+  })
+  .meta({ id: 'RoundAssignment' });
+
 const roundSchema = z
   .strictObject({
     id: z.uuid(),
@@ -45,6 +54,16 @@ const roundSchema = z
     candidate: candidateInRoundSchema,
     feedbackCount: z.int(),
     ratings: z.array(z.int()),
+    assignments: z
+      .array(roundAssignmentSchema)
+      .optional()
+      .meta({
+        description:
+          'The panel. Present for recruiters, **absent** — not empty — for interviewers, ' +
+          'because the interviewer query never selects it. A recruiter assigning someone ' +
+          'needs to see who is already on; an interviewer learning who else is ' +
+          'interviewing this candidate is what the assignment scope withholds.',
+      }),
   })
   .meta({
     id: 'Round',
@@ -337,5 +356,55 @@ roundsRouter.get(
   validate({ params: roundParams }),
   async (req: Request, res: Response) => {
     res.status(200).json(await listFeedback(actorOf(req), params<RoundParams>(req).id));
+  },
+);
+
+// ---------------------------------------------------------------------------
+// GET /applications/:candidateId/:roleId/rounds
+// ---------------------------------------------------------------------------
+
+/**
+ * Addressed by the `(candidateId, roleId)` pair, like every other application route, and
+ * registered here rather than in applications.ts because what it returns is a round and
+ * the field-set rules that govern it live in this file.
+ */
+const applicationParams = z.object({ candidateId: z.uuid(), roleId: z.uuid() });
+type ApplicationParams = z.infer<typeof applicationParams>;
+
+registerOperation({
+  method: 'get',
+  path: '/applications/:candidateId/:roleId/rounds',
+  tags: ['Rounds'],
+  summary: 'Every round booked against one application, panel included',
+  description:
+    'The read behind the recruiter’s scheduling screen: `POST /rounds` returns an id and ' +
+    'nothing else, so without this the only way to find a round again is to have kept ' +
+    'the id from the response that created it.\n\n' +
+    'Recruiters only. Hiring managers do not read rounds anywhere in this API, and an ' +
+    'interviewer reading this would get the full panel for a candidate’s every round — ' +
+    '`GET /me/rounds` is the list that is theirs.\n\n' +
+    'An application with no rounds yet is an empty array; a pair that names no ' +
+    'application is a 404.',
+  request: { params: applicationParams },
+  responses: [
+    { status: 200, description: 'Rounds for the application, soonest first.', schema: z.array(roundSchema) },
+    PROBLEM_RESPONSES.badRequest,
+    PROBLEM_RESPONSES.unauthorized,
+    { ...PROBLEM_RESPONSES.forbidden, description: 'Recruiters only.' },
+    {
+      status: 404,
+      description: 'No application for that candidate and role.',
+      schema: PROBLEM_RESPONSES.unauthorized.schema,
+    },
+  ],
+});
+
+roundsRouter.get(
+  '/applications/:candidateId/:roleId/rounds',
+  requireAuth,
+  requireRole(UserRole.RECRUITER),
+  validate({ params: applicationParams }),
+  async (req: Request, res: Response) => {
+    res.status(200).json(await listApplicationRounds(actorOf(req), params<ApplicationParams>(req)));
   },
 );

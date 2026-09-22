@@ -1,6 +1,8 @@
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import type { Schemas } from './api/client.js';
 import { useSession } from './auth/session.js';
+import { ApplicationDetail } from './routes/ApplicationDetail.js';
+import { Candidates } from './routes/Candidates.js';
 import { Login } from './routes/Login.js';
 import { MyRounds } from './routes/MyRounds.js';
 import { Pipeline } from './routes/Pipeline.js';
@@ -21,10 +23,12 @@ type Role = Schemas['PublicUser']['role'];
 const NAV: Record<Role, Array<{ to: string; label: string }>> = {
   RECRUITER: [
     { to: '/', label: 'Pipeline' },
+    { to: '/candidates', label: 'Candidates' },
     { to: '/reqs', label: 'Reqs' },
   ],
   HIRING_MANAGER: [
     { to: '/', label: 'Pipeline' },
+    { to: '/candidates', label: 'Candidates' },
     { to: '/reqs', label: 'Reqs' },
   ],
   INTERVIEWER: [{ to: '/', label: 'My rounds' }],
@@ -93,6 +97,13 @@ export function App() {
         <Routes>
           <Route path="/" element={<Home role={user.role} />} />
           <Route path="/reqs" element={<Reqs />} />
+          <Route path="/candidates" element={<Candidates />} />
+          {/*
+            An application is addressed by the pair it is unique on, the same pair the API
+            routes take — so a link to "this candidate on this req" is one URL a recruiter
+            can share, and it survives the candidate being on a second req.
+          */}
+          <Route path="/applications/:candidateId/:roleId" element={<ApplicationDetail />} />
           <Route path="/rounds/:id" element={<RoundDetail />} />
 
           {/*

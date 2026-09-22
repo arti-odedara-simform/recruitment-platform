@@ -25,9 +25,25 @@ const ROUND_BASE = {
   feedback: { select: { rating: true } },
 } as const;
 
+/**
+ * Who is already on the panel. Recruiter-only, and deliberately so: it is the recruiter
+ * who assigns, so it is the recruiter who needs to see the roster before adding to it.
+ * An interviewer reading it would learn who else is interviewing this candidate — which
+ * is the same thing the assignment scope withholds everywhere else (PLAN.md §1).
+ */
+const ASSIGNMENT_SELECT = {
+  select: {
+    assignedAt: true,
+    interviewer: { select: { id: true, name: true } },
+    assignedBy: { select: { id: true, name: true } },
+  },
+  orderBy: { assignedAt: 'asc' },
+} as const;
+
 export const ROUND_SELECT = {
   recruiter: {
     ...ROUND_BASE,
+    assignments: ASSIGNMENT_SELECT,
     application: {
       select: {
         id: true,
@@ -64,6 +80,18 @@ export interface RoundView {
    */
   feedbackCount: number;
   ratings: number[];
+  /**
+   * Present on the recruiter path and absent on the interviewer one — not empty, absent.
+   * The interviewer query never selects it, so there is no array here to have been
+   * emptied by a serializer (PLAN.md §1 layer 1).
+   */
+  assignments?: RoundAssignmentView[];
+}
+
+export interface RoundAssignmentView {
+  interviewer: { id: string; name: string };
+  assignedBy: { id: string; name: string };
+  assignedAt: Date;
 }
 
 type RoundRow = {
@@ -71,6 +99,11 @@ type RoundRow = {
   stage: Stage;
   scheduledAt: Date;
   feedback: Array<{ rating: number }>;
+  assignments?: Array<{
+    assignedAt: Date;
+    interviewer: { id: string; name: string };
+    assignedBy: { id: string; name: string };
+  }>;
   application: {
     id: string;
     roleId: string;
@@ -90,6 +123,9 @@ function toView(row: RoundRow): RoundView {
     candidate: row.application.candidate,
     feedbackCount: row.feedback.length,
     ratings: row.feedback.map((entry) => entry.rating),
+    // Spread rather than defaulted to `[]`: "this role does not see the panel" and "this
+    // round has nobody assigned yet" are different answers and must not serialise alike.
+    ...(row.assignments === undefined ? {} : { assignments: row.assignments }),
   };
 }
 
@@ -134,6 +170,40 @@ export async function listRoundsForInterviewer(actor: Actor): Promise<RoundView[
       orderBy: { scheduledAt: 'asc' },
     }),
   );
+  return rows.map(toView);
+}
+
+/**
+ * Every round booked against one application, for the recruiter screen that schedules
+ * them and assigns the panel.
+ *
+ * Returns `null` — not `[]` — when the pair names no application, so the service can
+ * tell "no such application" (404) apart from "an application with no rounds yet". The
+ * distinction matters on a screen whose whole job is to add the first round.
+ *
+ * Recruiter-only, and there is no interviewer variant on purpose: an interviewer asking
+ * "what else has this candidate sat?" is asking for the prior panel, and `GET /me/rounds`
+ * is the list that is theirs.
+ */
+export async function listRoundsForApplication(
+  _actor: Actor,
+  target: { candidateId: string; roleId: string },
+): Promise<RoundView[] | null> {
+  const application = await prisma.application.findUnique({
+    where: { candidateId_roleId: { candidateId: target.candidateId, roleId: target.roleId } },
+    select: { id: true },
+  });
+
+  if (!application) {
+    return null;
+  }
+
+  const rows = await prisma.interviewRound.findMany({
+    where: { applicationId: application.id },
+    select: ROUND_SELECT.recruiter,
+    orderBy: { scheduledAt: 'asc' },
+  });
+
   return rows.map(toView);
 }
 

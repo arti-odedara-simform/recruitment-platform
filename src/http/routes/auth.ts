@@ -1,11 +1,10 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
-import { UserRole } from '@prisma/client';
 import { body, validate } from '../middleware/validate.js';
 import { actorOf, requireAuth } from '../middleware/auth.js';
 import { describeActor, login } from '../../services/auth.service.js';
 import { registerOperation } from '../openapi/registry.js';
-import { PROBLEM_RESPONSES } from '../openapi/schemas.js';
+import { PROBLEM_RESPONSES, publicUserSchema } from '../openapi/schemas.js';
 
 export const authRouter = Router();
 
@@ -41,16 +40,6 @@ const loginSchema = z.object({
 });
 
 type LoginBody = z.infer<typeof loginSchema>;
-
-/** The user shape that may leave the API — `passwordHash` is not in it (PLAN.md §1). */
-const publicUserSchema = z
-  .object({
-    id: z.uuid(),
-    email: z.email(),
-    name: z.string(),
-    role: z.enum(UserRole),
-  })
-  .meta({ id: 'PublicUser' });
 
 const loginResponseSchema = z
   .object({

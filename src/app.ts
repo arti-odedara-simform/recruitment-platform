@@ -9,6 +9,7 @@ import { docsRouter } from './http/routes/docs.js';
 import { pipelineRouter } from './http/routes/pipeline.js';
 import { rolesRouter } from './http/routes/roles.js';
 import { roundsRouter } from './http/routes/rounds.js';
+import { usersRouter } from './http/routes/users.js';
 import { errorHandler, notFoundHandler } from './http/middleware/errorHandler.js';
 import { env } from './config/env.js';
 import './http/types.js';
@@ -60,6 +61,7 @@ export function createApp(): Express {
   app.use(pipelineRouter);
   app.use(rolesRouter);
   app.use(auditRouter);
+  app.use(usersRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

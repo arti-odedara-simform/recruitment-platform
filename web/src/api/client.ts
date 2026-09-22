@@ -160,3 +160,97 @@ export function submitFeedback(
 ): Promise<Schemas['Feedback']> {
   return apiFetch(`/rounds/${encodeURIComponent(id)}/feedback`, { method: 'POST', body: input });
 }
+
+// ---------------------------------------------------------------------------
+// The recruiter path: the work queue, the record behind a row, and the four
+// actions a recruiter takes on it.
+// ---------------------------------------------------------------------------
+
+export interface ApplicationFilter {
+  roleId?: string;
+  stage?: Schemas['ApplicationListItem']['currentStage'];
+  roleStatus?: 'OPEN' | 'CLOSED' | 'ALL';
+}
+
+export function applications(
+  filter: ApplicationFilter = {},
+): Promise<Schemas['ApplicationListItem'][]> {
+  return apiFetch('/applications', { query: { ...filter } });
+}
+
+/**
+ * The full candidate record — contact details included, for a recruiter. An interviewer
+ * calling this gets `{ id, name }` and nothing else, because the API runs a different
+ * query rather than trimming one result, so the union here is not a formality: reading
+ * `email` off it is a type error until the caller has narrowed.
+ */
+export function candidate(
+  id: string,
+): Promise<Schemas['CandidateRecruiterView'] | Schemas['CandidateInterviewerView']> {
+  return apiFetch(`/candidates/${encodeURIComponent(id)}`);
+}
+
+export function candidateAudit(id: string): Promise<Schemas['CandidateAudit']> {
+  return apiFetch(`/audit/candidates/${encodeURIComponent(id)}`);
+}
+
+/** Every round booked against one application, with the panel already on each. */
+export function applicationRounds(candidateId: string, roleId: string): Promise<Schemas['Round'][]> {
+  return apiFetch(
+    `/applications/${encodeURIComponent(candidateId)}/${encodeURIComponent(roleId)}/rounds`,
+  );
+}
+
+/** The picker behind "assign an interviewer" and "open a req". Recruiters only. */
+export function users(role?: Schemas['PublicUser']['role']): Promise<Schemas['PublicUser'][]> {
+  return apiFetch('/users', { query: { role } });
+}
+
+export function advanceStage(
+  candidateId: string,
+  roleId: string,
+  toStage: Schemas['ApplicationStage']['currentStage'],
+): Promise<Schemas['StageTransitionResult']> {
+  return apiFetch(
+    `/applications/${encodeURIComponent(candidateId)}/${encodeURIComponent(roleId)}/stage`,
+    { method: 'PATCH', body: { toStage } },
+  );
+}
+
+/**
+ * A stage skip. The reason is not a UI nicety — the API refuses anything under ten
+ * characters and a `CHECK` constraint refuses the row underneath that, so it reaches the
+ * audit trail or the override does not happen.
+ */
+export function overrideStage(
+  candidateId: string,
+  roleId: string,
+  toStage: Schemas['ApplicationStage']['currentStage'],
+  reason: string,
+): Promise<Schemas['StageTransitionResult']> {
+  return apiFetch(
+    `/applications/${encodeURIComponent(candidateId)}/${encodeURIComponent(roleId)}/override`,
+    { method: 'POST', body: { toStage, reason } },
+  );
+}
+
+export function createRound(input: {
+  candidateId: string;
+  roleId: string;
+  stage: Schemas['Round']['stage'];
+  scheduledAt: string;
+}): Promise<Schemas['CreatedRound']> {
+  return apiFetch('/rounds', { method: 'POST', body: input });
+}
+
+/**
+ * 204, so nothing comes back. A 409 is the composite primary key saying this interviewer
+ * is already on the round — the caller refetches rather than apologises, exactly as the
+ * feedback form does.
+ */
+export function assignInterviewer(roundId: string, interviewerId: string): Promise<void> {
+  return apiFetch(`/rounds/${encodeURIComponent(roundId)}/assignments`, {
+    method: 'POST',
+    body: { interviewerId },
+  });
+}

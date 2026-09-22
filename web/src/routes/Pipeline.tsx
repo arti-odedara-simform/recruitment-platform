@@ -1,18 +1,19 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { pipeline, stuck } from '../api/client.js';
 import type { Schemas } from '../api/client.js';
 import { useApi } from '../api/useApi.js';
 import { ErrorNotice, Loading } from '../components/Feedback.js';
+import { STAGES, TERMINAL, type Stage } from '../domain/stages.js';
 
 /**
  * The §6 view: counts per stage per open req, with ageing.
  *
  * Stage order is the enum's declaration order, not the alphabet — the API returns cells
- * in that order and this table repeats it, so a funnel reads left to right.
+ * in that order and this table repeats it, so a funnel reads left to right. Both the
+ * order and the terminal pair come from `domain/stages.ts`, so this screen and the
+ * recruiter screens cannot disagree about either.
  */
-type Stage = Schemas['PipelineStage']['stage'];
-
-const STAGES: Stage[] = ['APPLIED', 'SCREEN', 'INTERVIEW', 'OFFER', 'HIRED', 'REJECTED'];
 
 /** Anything sitting this long in one stage is worth a second look; the API's own default. */
 const STUCK_DAYS = 14;
@@ -24,8 +25,6 @@ const STUCK_DAYS = 14;
  * `GET /pipeline/stuck` makes by excluding these two stages outright — they are done,
  * not stuck — so the count still shows and the clock is left uncoloured.
  */
-const TERMINAL: Stage[] = ['HIRED', 'REJECTED'];
-
 function ageClass(days: number | undefined, stage?: Stage): string {
   if (days === undefined || (stage !== undefined && TERMINAL.includes(stage))) return '';
   if (days >= 21) return 'age-bad';
@@ -145,7 +144,12 @@ export function Pipeline() {
             <tbody>
               {(waiting.data ?? []).map((row) => (
                 <tr key={row.applicationId}>
-                  <td>{row.candidate.name}</td>
+                  <td>
+                    {/* Straight to the screen that can do something about it. */}
+                    <Link className="go" to={`/applications/${row.candidate.id}/${row.roleId}`}>
+                      {row.candidate.name}
+                    </Link>
+                  </td>
                   <td className="muted">{row.roleTitle}</td>
                   <td>
                     <span className="pill">{row.currentStage}</span>

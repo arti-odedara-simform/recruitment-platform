@@ -1,9 +1,14 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
-import { Stage, TransitionKind, UserRole } from '@prisma/client';
-import { body, params, validate } from '../middleware/validate.js';
+import { RoleStatus, Stage, TransitionKind, UserRole } from '@prisma/client';
+import { body, params, query, validate } from '../middleware/validate.js';
 import { actorOf, requireAuth, requireRole } from '../middleware/auth.js';
-import { advance, createApplication, override } from '../../services/application.service.js';
+import {
+  advance,
+  createApplication,
+  listApplications,
+  override,
+} from '../../services/application.service.js';
 import { ALLOWED, MIN_OVERRIDE_REASON_LENGTH } from '../../domain/stageMachine.js';
 import { registerOperation } from '../openapi/registry.js';
 import { PROBLEM_RESPONSES } from '../openapi/schemas.js';
@@ -79,6 +84,84 @@ const transitionSchema = z
 const transitionResultSchema = z
   .strictObject({ application: applicationSchema, transition: transitionSchema })
   .meta({ id: 'StageTransitionResult' });
+
+// ---------------------------------------------------------------------------
+// GET /applications
+// ---------------------------------------------------------------------------
+
+const DEFAULT_LIST_LIMIT = 100;
+
+const listQuery = z.object({
+  roleId: z.uuid().optional().meta({ description: 'Narrow to one req.' }),
+  stage: z.enum(Stage).optional().meta({ description: 'Narrow to one stage.' }),
+  roleStatus: z
+    .enum([RoleStatus.OPEN, RoleStatus.CLOSED, 'ALL'])
+    .default(RoleStatus.OPEN)
+    .meta({ description: 'Status of the req, not the application. Defaults to OPEN, as `GET /roles` does.' }),
+  limit: z.coerce.number().int().min(1).max(500).default(DEFAULT_LIST_LIMIT),
+});
+
+type ListQuery = z.infer<typeof listQuery>;
+
+const applicationListItemSchema = z
+  .strictObject({
+    applicationId: z.uuid(),
+    candidate: z.strictObject({ id: z.uuid(), name: z.string() }),
+    roleId: z.uuid(),
+    roleTitle: z.string(),
+    roleStatus: z.enum(RoleStatus),
+    currentStage: z.enum(Stage),
+    currentStageEnteredAt: z.iso.datetime(),
+    daysInStage: z.number(),
+    roundCount: z.int(),
+  })
+  .meta({
+    id: 'ApplicationListItem',
+    description:
+      'The candidate carries `id` and `name` only — the same field set ' +
+      '`GET /pipeline/stuck` returns, and for the same two reasons: contact details are ' +
+      'read one record at a time from `GET /candidates/:id`, and this endpoint also ' +
+      'serves hiring managers, who may not read them at all (PLAN.md §1).',
+  });
+
+registerOperation({
+  method: 'get',
+  path: '/applications',
+  tags: ['Applications'],
+  summary: 'Who is on which req, and where they are',
+  description:
+    'The list a recruiter works from. `GET /pipeline` answers *how many* and ' +
+    '`GET /pipeline/stuck` answers *which ones are late*; this answers *who*, and it is ' +
+    'the screen the stage and round actions are reached from.\n\n' +
+    '- **Recruiters** see every req.\n' +
+    '- **Hiring managers** see applications on the reqs they own, and the restriction is ' +
+    'a predicate in the same query — another manager’s `?roleId=` returns an empty list ' +
+    'rather than a filtered one. They read it; every action on it is recruiter-only.\n' +
+    '- **Interviewers** have no access. A list of everyone in the pipeline, by name, is ' +
+    'the opposite of what the assignment scope exists to do.\n\n' +
+    'Open reqs by default, longest-waiting first, bounded by `limit`.',
+  request: { query: listQuery },
+  responses: [
+    {
+      status: 200,
+      description: 'Applications in scope, longest-waiting in their current stage first.',
+      schema: z.array(applicationListItemSchema),
+    },
+    PROBLEM_RESPONSES.badRequest,
+    PROBLEM_RESPONSES.unauthorized,
+    { ...PROBLEM_RESPONSES.forbidden, description: 'Interviewers work from `GET /me/rounds`.' },
+  ],
+});
+
+applicationsRouter.get(
+  '/applications',
+  requireAuth,
+  requireRole(UserRole.RECRUITER, UserRole.HIRING_MANAGER),
+  validate({ query: listQuery }),
+  async (req: Request, res: Response) => {
+    res.status(200).json(await listApplications(actorOf(req), query<ListQuery>(req)));
+  },
+);
 
 // ---------------------------------------------------------------------------
 // POST /applications

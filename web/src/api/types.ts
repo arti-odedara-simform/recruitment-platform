@@ -31,7 +31,17 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Who is on which req, and where they are
+         * @description The list a recruiter works from. `GET /pipeline` answers *how many* and `GET /pipeline/stuck` answers *which ones are late*; this answers *who*, and it is the screen the stage and round actions are reached from.
+         *
+         *     - **Recruiters** see every req.
+         *     - **Hiring managers** see applications on the reqs they own, and the restriction is a predicate in the same query — another manager’s `?roleId=` returns an empty list rather than a filtered one. They read it; every action on it is recruiter-only.
+         *     - **Interviewers** have no access. A list of everyone in the pipeline, by name, is the opposite of what the assignment scope exists to do.
+         *
+         *     Open reqs by default, longest-waiting first, bounded by `limit`.
+         */
+        get: operations["getApplications"];
         put?: never;
         /**
          * Put a candidate onto a req
@@ -383,6 +393,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/applications/{candidateId}/{roleId}/rounds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every round booked against one application, panel included
+         * @description The read behind the recruiter’s scheduling screen: `POST /rounds` returns an id and nothing else, so without this the only way to find a round again is to have kept the id from the response that created it.
+         *
+         *     Recruiters only. Hiring managers do not read rounds anywhere in this API, and an interviewer reading this would get the full panel for a candidate’s every round — `GET /me/rounds` is the list that is theirs.
+         *
+         *     An application with no rounds yet is an empty array; a pair that names no application is a 404.
+         */
+        get: operations["getApplicationsCandidateIdRoleIdRounds"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The staff directory, for the pickers that need an id
+         * @description Two recruiter actions name a user by id — `POST /rounds/:id/assignments` takes an interviewer, `POST /roles` takes a hiring manager — and both verify the role they were handed. This is where a client gets the id to send.
+         *
+         *     **Recruiters only.** Nobody else assigns or opens reqs, so nobody else has a reason to enumerate accounts; an interviewer able to list the panel would learn who else is interviewing a candidate ahead of their own round.
+         *
+         *     Staff accounts, not candidates: `email` here is a colleague’s work address, and it is not the restricted contact data PLAN.md §1 is about. `passwordHash` is not in the field set at all.
+         */
+        get: operations["getUsers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -399,17 +457,26 @@ export interface components {
              */
             rls: "enforced" | "disabled" | "unavailable";
         };
-        ApplicationStage: {
+        /** @description The candidate carries `id` and `name` only — the same field set `GET /pipeline/stuck` returns, and for the same two reasons: contact details are read one record at a time from `GET /candidates/:id`, and this endpoint also serves hiring managers, who may not read them at all (PLAN.md §1). */
+        ApplicationListItem: {
             /** Format: uuid */
             applicationId: string;
-            /** Format: uuid */
-            candidateId: string;
+            candidate: {
+                /** Format: uuid */
+                id: string;
+                name: string;
+            };
             /** Format: uuid */
             roleId: string;
+            roleTitle: string;
+            /** @enum {string} */
+            roleStatus: "OPEN" | "CLOSED";
             /** @enum {string} */
             currentStage: "APPLIED" | "SCREEN" | "INTERVIEW" | "OFFER" | "HIRED" | "REJECTED";
             /** Format: date-time */
             currentStageEnteredAt: string;
+            daysInStage: number;
+            roundCount: number;
         };
         /** @description RFC-7807-ish problem details. No raw Prisma or stack trace ever reaches a client. */
         Problem: {
@@ -426,6 +493,18 @@ export interface components {
                 path: string;
                 message: string;
             }[];
+        };
+        ApplicationStage: {
+            /** Format: uuid */
+            applicationId: string;
+            /** Format: uuid */
+            candidateId: string;
+            /** Format: uuid */
+            roleId: string;
+            /** @enum {string} */
+            currentStage: "APPLIED" | "SCREEN" | "INTERVIEW" | "OFFER" | "HIRED" | "REJECTED";
+            /** Format: date-time */
+            currentStageEnteredAt: string;
         };
         StageTransitionResult: {
             application: components["schemas"]["ApplicationStage"];
@@ -635,6 +714,22 @@ export interface components {
             };
             feedbackCount: number;
             ratings: number[];
+            /** @description The panel. Present for recruiters, **absent** — not empty — for interviewers, because the interviewer query never selects it. A recruiter assigning someone needs to see who is already on; an interviewer learning who else is interviewing this candidate is what the assignment scope withholds. */
+            assignments?: components["schemas"]["RoundAssignment"][];
+        };
+        RoundAssignment: {
+            interviewer: {
+                /** Format: uuid */
+                id: string;
+                name: string;
+            };
+            assignedBy: {
+                /** Format: uuid */
+                id: string;
+                name: string;
+            };
+            /** Format: date-time */
+            assignedAt: string;
         };
         CreatedRound: {
             /** Format: uuid */
@@ -705,6 +800,58 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["Health"];
+                };
+            };
+        };
+    };
+    getApplications: {
+        parameters: {
+            query?: {
+                roleId?: string;
+                stage?: "APPLIED" | "SCREEN" | "INTERVIEW" | "OFFER" | "HIRED" | "REJECTED";
+                roleStatus?: "OPEN" | "CLOSED" | "ALL";
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Applications in scope, longest-waiting in their current stage first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplicationListItem"][];
+                };
+            };
+            /** @description The request failed shape validation, before any domain logic ran (PLAN.md §7). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description No token, a malformed Authorization header, or a token that is expired, forged or issued to an account that no longer exists. Carries `WWW-Authenticate: Bearer`. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Interviewers work from `GET /me/rounds`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };
@@ -1723,6 +1870,115 @@ export interface operations {
             };
             /** @description You have already submitted feedback for this round. */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getApplicationsCandidateIdRoleIdRounds: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                candidateId: string;
+                roleId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Rounds for the application, soonest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Round"][];
+                };
+            };
+            /** @description The request failed shape validation, before any domain logic ran (PLAN.md §7). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description No token, a malformed Authorization header, or a token that is expired, forged or issued to an account that no longer exists. Carries `WWW-Authenticate: Bearer`. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Recruiters only. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description No application for that candidate and role. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getUsers: {
+        parameters: {
+            query?: {
+                role?: "INTERVIEWER" | "RECRUITER" | "HIRING_MANAGER";
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accounts in scope, by name. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicUser"][];
+                };
+            };
+            /** @description The request failed shape validation, before any domain logic ran (PLAN.md §7). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description No token, a malformed Authorization header, or a token that is expired, forged or issued to an account that no longer exists. Carries `WWW-Authenticate: Bearer`. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Recruiters only. */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

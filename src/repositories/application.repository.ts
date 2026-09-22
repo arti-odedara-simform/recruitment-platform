@@ -1,4 +1,4 @@
-import { RoleStatus, Stage, type TransitionKind } from '@prisma/client';
+import { Prisma, RoleStatus, Stage, type TransitionKind } from '@prisma/client';
 import { prisma } from '../db/client.js';
 import { NotFoundError } from '../errors/AppError.js';
 import type { Actor } from '../domain/actor.js';
@@ -233,4 +233,110 @@ export async function createApplication(
       },
     };
   });
+}
+
+// ---------------------------------------------------------------------------
+// The recruiter's work queue: which candidates are on which req, and where
+// ---------------------------------------------------------------------------
+
+/**
+ * `GET /pipeline` answers *how many*, `GET /pipeline/stuck` answers *which ones are
+ * late*. Neither answers "show me everyone on this req", which is the list a recruiter
+ * works from — so this is that list, and it is the only read in the file.
+ *
+ * The candidate arrives as `{ id, name }` and nothing else, exactly as it does from
+ * `findStuck`. Contact details are one record at a time through `GET /candidates/:id`,
+ * where the recruiter-only field set lives (PLAN.md §1) — a list endpoint that carried
+ * them would put fifteen email addresses on screen to answer a question about stages,
+ * and this endpoint also serves hiring managers, who may not read them at all.
+ */
+export interface ApplicationListRow {
+  applicationId: string;
+  candidate: { id: string; name: string };
+  roleId: string;
+  roleTitle: string;
+  roleStatus: RoleStatus;
+  currentStage: Stage;
+  currentStageEnteredAt: Date;
+  /** Rounds scheduled so far — an aggregate, so no round row is read to produce it. */
+  roundCount: number;
+}
+
+export interface ApplicationListFilter {
+  roleId?: string | undefined;
+  stage?: Stage | undefined;
+  /** `ALL` is the explicit opt-in, matching `GET /roles`. */
+  roleStatus: RoleStatus | 'ALL';
+  limit: number;
+}
+
+const APPLICATION_LIST_SELECT = {
+  id: true,
+  currentStage: true,
+  currentStageEnteredAt: true,
+  candidate: { select: { id: true, name: true } },
+  role: { select: { id: true, title: true, status: true } },
+  _count: { select: { rounds: true } },
+} as const;
+
+function listWhere(
+  filter: ApplicationListFilter,
+  scope: Prisma.RoleWhereInput,
+): Prisma.ApplicationWhereInput {
+  return {
+    ...(filter.stage ? { currentStage: filter.stage } : {}),
+    role: {
+      ...(filter.roleStatus === 'ALL' ? {} : { status: filter.roleStatus }),
+      ...(filter.roleId ? { id: filter.roleId } : {}),
+      ...scope,
+    },
+  };
+}
+
+async function listApplications(
+  where: Prisma.ApplicationWhereInput,
+  limit: number,
+): Promise<ApplicationListRow[]> {
+  const rows = await prisma.application.findMany({
+    where,
+    select: APPLICATION_LIST_SELECT,
+    /**
+     * Longest-waiting first, because that is the order the list is acted on — the same
+     * ordering `findStuck` uses, and for the same reason. `(roleId, currentStage,
+     * currentStageEnteredAt)` covers the `?roleId=&stage=` path of it.
+     */
+    orderBy: { currentStageEnteredAt: 'asc' },
+    take: limit,
+  });
+
+  return rows.map((row) => ({
+    applicationId: row.id,
+    candidate: row.candidate,
+    roleId: row.role.id,
+    roleTitle: row.role.title,
+    roleStatus: row.role.status,
+    currentStage: row.currentStage,
+    currentStageEnteredAt: row.currentStageEnteredAt,
+    roundCount: row._count.rounds,
+  }));
+}
+
+/** Recruiters work every req. The role is the authorization (PLAN.md §4). */
+export async function listApplicationsForRecruiter(
+  _actor: Actor,
+  filter: ApplicationListFilter,
+): Promise<ApplicationListRow[]> {
+  return listApplications(listWhere(filter, {}), filter.limit);
+}
+
+/**
+ * Ownership as a predicate in the same statement, not a filter over a recruiter's
+ * result — so a hiring manager passing another manager's `?roleId=` gets an empty list
+ * because the rows were never selected (PLAN.md §1 layer 2).
+ */
+export async function listApplicationsForHiringManager(
+  actor: Actor,
+  filter: ApplicationListFilter,
+): Promise<ApplicationListRow[]> {
+  return listApplications(listWhere(filter, { hiringManagerId: actor.id }), filter.limit);
 }

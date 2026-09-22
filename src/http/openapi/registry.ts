@@ -235,6 +235,12 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           'Counts and ageing per stage per open req, answered by one grouped aggregate ' +
           'rather than by loading applications into the process (PLAN.md §6).',
       },
+      {
+        name: 'Users',
+        description:
+          'The staff directory the recruiter pickers read — interviewers to assign, ' +
+          'hiring managers to own a req. Recruiters only.',
+      },
       { name: 'Health', description: 'Liveness, including the database round-trip.' },
     ],
     components: {
