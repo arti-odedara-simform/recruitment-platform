@@ -200,7 +200,7 @@ describe('GET /applications/:candidateId/:roleId/rounds', () => {
     expect(panel.map((entry) => entry.interviewer.id).sort()).toEqual(
       [USER_IDS.ingrid, USER_IDS.ivan].sort(),
     );
-    expect(panel[0].assignedBy.id).toBe(USER_IDS.rachel);
+    expect(panel[0]?.assignedBy.id).toBe(USER_IDS.rachel);
   });
 
   it('404s on a pair that names no application', async () => {
