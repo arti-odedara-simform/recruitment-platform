@@ -221,7 +221,18 @@ label.inline input { width: 72px; }
 /* Notices ---------------------------------------------------------------- */
 
 .notice.error { background: var(--bad-bg); color: var(--bad); display: grid; gap: 6px; }
+.notice.ok { background: var(--ok-bg); color: var(--ok); font-size: 0.9rem; }
 p.error { color: var(--bad); font-size: 0.85rem; }
+span.error { color: var(--bad); font-size: 0.78rem; }
+
+/* Creating a req, and putting a candidate on one ------------------------- */
+
+.create { display: grid; gap: 14px; }
+
+.create-fields { display: flex; gap: 16px; align-items: start; flex-wrap: wrap; }
+
+/* A title and a pasted uuid both want room; the pickers size to their content. */
+.create-fields input { width: min(320px, 100%); }
 
 /* Rounds and feedback ----------------------------------------------------- */
 

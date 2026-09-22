@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { applications, roles } from '../api/client.js';
 import { useApi } from '../api/useApi.js';
+import { useSession } from '../auth/session.js';
+import { AddToReqForm } from '../components/AddToReqForm.js';
 import { ErrorNotice, Loading } from '../components/Feedback.js';
 import { STAGES, TERMINAL, type Stage } from '../domain/stages.js';
 
@@ -29,6 +31,7 @@ function ageClass(days: number, stage: Stage): string {
 }
 
 export function Candidates() {
+  const { user } = useSession();
   const [roleId, setRoleId] = useState('');
   const [stage, setStage] = useState<Stage | ''>('');
   const [roleStatus, setRoleStatus] = useState<StatusFilter>('OPEN');
@@ -93,6 +96,12 @@ export function Candidates() {
           </select>
         </label>
       </div>
+
+      {/*
+        Recruiters only, the same courtesy the navigation extends: `POST /applications`
+        is theirs, and a hiring manager pressing this could only collect a 403.
+      */}
+      {user?.role === 'RECRUITER' && <AddToReqForm onAdded={rows.reload} />}
 
       {rows.loading ? (
         <Loading label="Loading candidates…" />

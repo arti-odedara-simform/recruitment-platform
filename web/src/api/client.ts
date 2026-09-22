@@ -254,3 +254,35 @@ export function assignInterviewer(roundId: string, interviewerId: string): Promi
     body: { interviewerId },
   });
 }
+
+// ---------------------------------------------------------------------------
+// The two writes that bring the pipeline's own subjects into existence: a req,
+// and a candidate on one. Recruiters only, both of them.
+// ---------------------------------------------------------------------------
+
+/**
+ * `status` is not an input — a req opens OPEN, and closing one is a separate act the API
+ * does not have yet. `hiringManagerId` must name a user whose role is HIRING_MANAGER; the
+ * API checks rather than assumes, and answers 400 when it is somebody else.
+ */
+export function createRole(input: {
+  title: string;
+  hiringManagerId: string;
+}): Promise<Schemas['Role']> {
+  return apiFetch('/roles', { method: 'POST', body: input });
+}
+
+/**
+ * The pipeline unit comes into existence here, at APPLIED — there is no `stage` input,
+ * because every later stage is the stage machine's business.
+ *
+ * A 409 is the unique index saying this candidate is already on this req. Like the
+ * assignment and feedback forms, the caller refetches rather than apologises: the row
+ * the recruiter wanted is there, someone else just created it first.
+ */
+export function createApplication(input: {
+  candidateId: string;
+  roleId: string;
+}): Promise<Schemas['ApplicationStage']> {
+  return apiFetch('/applications', { method: 'POST', body: input });
+}

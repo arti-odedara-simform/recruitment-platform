@@ -756,9 +756,18 @@ What it covers so far: login; the pipeline dashboard (counts and time-in-stage p
 req, plus the "waiting too long" list with an adjustable threshold); the req list with
 its status filter; the interviewer's rounds and feedback form; and the recruiter path —
 
+- **Reqs** (`/reqs`) — the status-filtered list, and, for a recruiter, the form that
+  opens one. The hiring manager is picked from `GET /users?role=HIRING_MANAGER` rather
+  than typed, because ownership is what scopes a hiring manager's whole view: a req
+  handed to the wrong person is one its "manager" can never see. The API verifies the
+  named user's role before the write regardless.
 - **Candidates** (`/candidates`) — one row per application, filtered by req, stage and
   req status, longest-waiting first. Names and stages only, because that is all the
-  endpoint returns.
+  endpoint returns. A recruiter also puts a candidate onto a req from here: only OPEN
+  reqs are offered, since the API refuses a closed one from inside the transaction. The
+  candidate picker lists whoever is already on a req, gathered from `GET /applications`
+  — this API has no candidate directory, so anyone new is reachable by id, which the
+  form offers as its own option rather than hiding the gap.
 - **The application screen** (`/applications/:candidateId/:roleId`) — a candidate on a
   req, and everything a recruiter does to it: contact details (recruiter-only, read one
   record at a time), stage advances as buttons for the legal moves, an override as a form
