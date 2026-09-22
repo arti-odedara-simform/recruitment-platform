@@ -138,6 +138,7 @@ value stops the process with a readable list rather than failing three layers do
 | `npm run db:migrate` | `prisma migrate dev` — create and apply a migration |
 | `npm run db:deploy` | `prisma migrate deploy` — apply existing migrations |
 | `npm run db:seed` | create/refresh the seven development accounts (idempotent) |
+| `npm run openapi:json` | write the generated OpenAPI document to `openapi.json` (gitignored; `web/` turns it into client types) |
 | `npm run db:rls` | install PLAN.md §1 layer 3 — the `app_interviewer` role, its column GRANTs and its row policies (idempotent; needs CREATE ROLE) |
 | `npm run db:seed:scale` | generate the §8 scale dataset — 200 reqs, 20 000 candidates, deterministic; `-- --clean` removes it |
 | `npm run db:reset` | drop, recreate, re-migrate |
@@ -195,6 +196,7 @@ src/
   http/openapi/              the spec, generated from the same zod schemas
   http/routes/               routers
 tests/                       vitest + supertest, against a real database
+web/                         the frontend — its own package, see below
 ```
 
 ## API docs
@@ -685,6 +687,58 @@ Three notes on how it is wired, each of them a deliberate choice:
 the role, never through the repository — an assertion routed through the code being proved
 unnecessary would prove nothing. Those tests install the role themselves and skip, with a
 message, on a database whose user may not create one.
+
+## Frontend (`web/`)
+
+**Outside PLAN.md on purpose.** §13 lists "No UI" as out of scope and the plan's opening
+rationale explains why: every graded item lives in the data-access layer, so the API is
+the deliverable. `web/` is an addition on top of a finished API, not part of what the
+plan set out to build — it changes nothing about the API's behaviour, and the suite that
+covers the API does not depend on it.
+
+React + Vite + TypeScript, as **its own package** with its own `package.json`, lockfile,
+`tsconfig` and eslint config. Not an npm workspace: the [Dockerfile](Dockerfile) copies
+`node_modules/@prisma` and `node_modules/.prisma` by exact path, and workspace hoisting
+is the one thing that could move them.
+
+```bash
+npm run dev                  # the API, on :4000   (in the repo root)
+cd web && npm install
+npm run dev                  # the UI, on :5173
+```
+
+Then open <http://localhost:5173> and sign in — the login form lists the seeded accounts.
+
+| | |
+|---|---|
+| `npm run dev` | Vite dev server on :5173, proxying `/api/*` to the API on :4000 |
+| `npm run build` | typecheck, then a production bundle in `web/dist` |
+| `npm run api:types` | regenerate `src/api/types.ts` from the API's OpenAPI document |
+| `npm run lint` / `npm run typecheck` | its own configs, React rules included |
+
+Three decisions worth knowing:
+
+- **No CORS on the API.** Vite's dev proxy forwards `/api/*` server-side, so the browser
+  only ever sees one origin. The API's middleware stack and its "exactly two anonymous
+  routes" surface are untouched by the existence of a frontend.
+- **The client types are generated, not written.** `npm run api:types` dumps the
+  OpenAPI document (itself generated from the zod schemas `validate()` enforces) and
+  turns it into `web/src/api/types.ts`. So the chain from what the server enforces to
+  what the UI believes has no hand-written link, and a response shape that moves breaks
+  `npm run typecheck` in `web/`.
+- **The token lives in `sessionStorage`.** It survives a reload — a 15-minute token that
+  dies on F5 is unusable — and dies with the tab. It is readable by any script on the
+  origin, so it is not what a production app would do; that would be an httpOnly cookie
+  set by the API, with a CSRF story to match. Noted in
+  [web/src/auth/session.tsx](web/src/auth/session.tsx) rather than left implicit.
+
+What it covers so far: login, the pipeline dashboard (counts and time-in-stage per open
+req, plus the "waiting too long" list with an adjustable threshold), and the req list
+with its status filter. Navigation hides links a role would only get a 403 from — a
+courtesy, not a security boundary, since the request still reaches the server and the
+server still refuses it. An interviewer signing in gets a plain "nothing here yet"
+panel rather than a red 403, because a 403 there is the authorization model working, not
+a fault.
 
 ## Architecture rules already enforced
 

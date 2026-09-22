@@ -3,7 +3,8 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'node_modules/**', 'prisma/migrations/**', 'coverage/**'],
+    // web/ is a separate package with its own eslint config, React rules and tsconfig.
+    ignores: ['dist/**', 'node_modules/**', 'prisma/migrations/**', 'coverage/**', 'web/**'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

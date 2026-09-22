@@ -1,0 +1,224 @@
+/* One stylesheet, no framework: three screens do not need a design system, and a
+   dependency would outlive its usefulness here. Colours are tokens so dark mode is a
+   redefinition rather than a second set of rules. */
+
+:root {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --ink: #16191d;
+  --muted: #6b7280;
+  --line: #e4e7eb;
+  --accent: #2d5bd7;
+  --ok: #157f4a;
+  --warn: #9a6200;
+  --bad: #b3261e;
+  --ok-bg: #e9f6ee;
+  --warn-bg: #fdf3e0;
+  --bad-bg: #fdecea;
+  --radius: 10px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101317;
+    --panel: #171b20;
+    --ink: #e8eaed;
+    --muted: #9aa3ad;
+    --line: #262b32;
+    --accent: #7fa0ff;
+    --ok: #67d39a;
+    --warn: #e0ae5a;
+    --bad: #ff8a80;
+    --ok-bg: #16281f;
+    --warn-bg: #2a2114;
+    --bad-bg: #2b1918;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+h1, h2 { margin: 0 0 4px; font-size: 1.15rem; }
+h1 { font-size: 1.35rem; }
+p { margin: 0; }
+
+.muted { color: var(--muted); font-size: 0.9rem; }
+.pad { padding: 16px; }
+.stack { display: grid; gap: 16px; }
+
+/* Layout ------------------------------------------------------------------ */
+
+.app { max-width: 1100px; margin: 0 auto; padding: 16px; }
+
+.top {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 4px 20px;
+}
+
+.brand { margin-right: auto; }
+
+.top nav { display: flex; gap: 4px; }
+
+.top nav a {
+  padding: 6px 12px;
+  border-radius: var(--radius);
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.top nav a:hover { background: var(--panel); color: var(--ink); }
+.top nav a.active { background: var(--panel); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line); }
+
+.who { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; }
+
+.centered {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+/* Cards ------------------------------------------------------------------- */
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.card-head { padding: 16px; border-bottom: 1px solid var(--line); }
+.card-head.row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+
+/* Tables ------------------------------------------------------------------ */
+
+.scroll { overflow-x: auto; }
+
+table.grid { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+
+table.grid th,
+table.grid td {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+table.grid thead th {
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+table.grid tbody tr:last-child th,
+table.grid tbody tr:last-child td { border-bottom: none; }
+
+table.grid .sticky {
+  position: sticky;
+  left: 0;
+  background: var(--panel);
+  font-weight: 600;
+}
+
+table.grid td.empty { color: var(--line); }
+table.grid td.total { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+.count { display: block; font-size: 1.05rem; font-variant-numeric: tabular-nums; }
+.age { display: block; font-size: 0.72rem; color: var(--muted); }
+
+/* Ageing is the whole point of the view, so it is colour as well as a number. */
+.age-ok .count { color: var(--ok); }
+.age-warn { background: var(--warn-bg); }
+.age-warn .count { color: var(--warn); }
+.age-bad { background: var(--bad-bg); }
+.age-bad .count { color: var(--bad); }
+td.age-warn { color: var(--warn); font-weight: 600; }
+td.age-bad { color: var(--bad); font-weight: 600; }
+
+/* Bits ------------------------------------------------------------------- */
+
+.pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.pill.open { color: var(--ok); }
+.pill.closed { color: var(--muted); }
+.pill.role { color: var(--accent); }
+
+.tabs { display: flex; gap: 4px; }
+
+.tab {
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.tab.active { color: var(--ink); border-color: var(--accent); }
+
+button {
+  font: inherit;
+  padding: 9px 14px;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+button:disabled { opacity: 0.6; cursor: default; }
+
+button.link {
+  background: none;
+  color: var(--accent);
+  padding: 0;
+  text-decoration: underline;
+  font-size: 0.9rem;
+}
+
+label { display: grid; gap: 4px; font-size: 0.85rem; color: var(--muted); }
+label.inline { display: flex; align-items: center; gap: 8px; }
+
+input {
+  font: inherit;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--ink);
+}
+
+label.inline input { width: 72px; }
+
+/* Login ------------------------------------------------------------------- */
+
+.login { width: min(380px, 100%); padding: 24px; display: grid; gap: 14px; }
+
+.demo { list-style: none; margin: 4px 0 0; padding: 12px 0 0; border-top: 1px solid var(--line); display: grid; gap: 6px; }
+.demo li { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; font-size: 0.8rem; }
+
+/* Notices ---------------------------------------------------------------- */
+
+.notice.error { background: var(--bad-bg); color: var(--bad); display: grid; gap: 6px; }
+p.error { color: var(--bad); font-size: 0.85rem; }
