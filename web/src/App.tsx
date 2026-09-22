@@ -1,8 +1,10 @@
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { useSession } from './auth/session.js';
 import { Login } from './routes/Login.js';
+import { MyRounds } from './routes/MyRounds.js';
 import { Pipeline } from './routes/Pipeline.js';
 import { Reqs } from './routes/Reqs.js';
+import { RoundDetail } from './routes/RoundDetail.js';
 
 /**
  * Nothing here decides what a role may see — the API does, and it answers 403 or 404 on
@@ -13,6 +15,7 @@ import { Reqs } from './routes/Reqs.js';
 const NAV = [
   { to: '/pipeline', label: 'Pipeline', roles: ['RECRUITER', 'HIRING_MANAGER'] },
   { to: '/reqs', label: 'Reqs', roles: ['RECRUITER', 'HIRING_MANAGER'] },
+  { to: '/rounds', label: 'My rounds', roles: ['INTERVIEWER'] },
 ];
 
 export function App() {
@@ -53,21 +56,29 @@ export function App() {
       <main>
         {visible.length === 0 ? (
           /**
-           * An interviewer has no screen here yet. Routing them to `/pipeline` anyway
-           * would show a red 403 that reads like a fault — it is not one, it is the
+           * Every seeded role now has a screen, so this is reachable only by a role added
+           * to the API without one added here. Routing them to someone else's view would
+           * show a red 403 that reads like a fault — it is not one, it is the
            * authorization model working, so say that instead.
            */
           <section className="card pad">
             <h2>Nothing here yet for {user.role.toLowerCase().replace('_', ' ')}s</h2>
             <p className="muted">
-              This UI covers the recruiter pipeline so far. Interviewer screens — assigned
-              rounds and feedback — are next; the API already serves them.
+              This UI has no screen for your role. The API may still serve you — see the
+              OpenAPI document at <code>/docs</code>.
             </p>
           </section>
         ) : (
           <Routes>
             <Route path="/pipeline" element={<Pipeline />} />
             <Route path="/reqs" element={<Reqs />} />
+            <Route path="/rounds" element={<MyRounds />} />
+            {/*
+              Registered for every role, not just interviewers: `GET /rounds/:id` serves
+              recruiters too, so a link to one should work for them. The submit form
+              inside is what checks the role, and the API checks it again.
+            */}
+            <Route path="/rounds/:id" element={<RoundDetail />} />
             <Route path="*" element={<Navigate to={visible[0]!.to} replace />} />
           </Routes>
         )}

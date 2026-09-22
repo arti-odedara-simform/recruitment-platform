@@ -129,3 +129,34 @@ export function stuck(days: number, limit = 25): Promise<Schemas['StuckApplicati
 export function roles(status: 'OPEN' | 'CLOSED' | 'ALL' = 'OPEN'): Promise<Schemas['Role'][]> {
   return apiFetch('/roles', { query: { status } });
 }
+
+/**
+ * The interviewer path. `/me/rounds` takes no parameter by design — the route is the
+ * scope, so there is nothing here that could be pointed at someone else's assignments.
+ *
+ * Round ids reach these from the URL bar via `useParams`, so they are encoded rather
+ * than interpolated raw: a path segment is not a place to trust a router param.
+ */
+export function myRounds(): Promise<Schemas['Round'][]> {
+  return apiFetch('/me/rounds');
+}
+
+export function round(id: string): Promise<Schemas['Round']> {
+  return apiFetch(`/rounds/${encodeURIComponent(id)}`);
+}
+
+export function roundFeedback(id: string): Promise<Schemas['PeerFeedback'][]> {
+  return apiFetch(`/rounds/${encodeURIComponent(id)}/feedback`);
+}
+
+/**
+ * A 409 from this is not a fault — it is the `@@unique([roundId, interviewerId])` index
+ * saying this interviewer has already submitted. The caller refetches rather than
+ * apologises; see `RoundDetail`.
+ */
+export function submitFeedback(
+  id: string,
+  input: { rating: number; notes: string },
+): Promise<Schemas['Feedback']> {
+  return apiFetch(`/rounds/${encodeURIComponent(id)}/feedback`, { method: 'POST', body: input });
+}
