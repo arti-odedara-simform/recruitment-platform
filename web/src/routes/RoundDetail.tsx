@@ -173,8 +173,13 @@ export function RoundDetail() {
               application is in {round.data.currentStage}
             </p>
           </div>
-          <Link className="go" to="/rounds">
-            ← My rounds
+          {/*
+            Home is `/` for every role, but it is not the same screen for every role, so
+            the label follows the destination rather than assuming the reader is on the
+            panel — a recruiter reaching a round detail goes back to the pipeline.
+          */}
+          <Link className="go" to="/">
+            ← {user?.role === 'INTERVIEWER' ? 'My rounds' : 'Pipeline'}
           </Link>
         </header>
 
