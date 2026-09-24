@@ -87,9 +87,23 @@ docker compose up --build
 curl http://localhost:4000/health
 ```
 
+Three services, no manual step between them: **db** (postgres:16), **api** on
+<http://localhost:4000>, and **web** — the UI on <http://localhost:5173>, where the login
+form lists the seeded accounts. The API waits for the database healthcheck, applies
+migrations, installs row-level security and seeds; the UI waits for the API's.
+
 Postgres is published on host port **5433** so it does not collide with a Postgres
-already running on 5432. The API waits for the database healthcheck, applies migrations,
-then serves.
+already running on 5432.
+
+| | |
+|---|---|
+| <http://localhost:5173> | the UI |
+| <http://localhost:4000/docs> | Swagger UI — browse and try every endpoint |
+| <http://localhost:4000/health> | liveness, database, and whether layer 3 is enforced |
+
+The `web` image is nginx serving the built bundle, and it forwards `/api/*` to the api
+service the way Vite's dev proxy does for `npm run dev` — so the browser sees one origin
+and [the API still needs no CORS](#frontend-web).
 
 > Not yet verified on this machine — Docker is not installed here. Everything below
 > (Option B) has been run end to end.
@@ -721,26 +735,32 @@ React + Vite + TypeScript, as **its own package** with its own `package.json`, l
 `node_modules/@prisma` and `node_modules/.prisma` by exact path, and workspace hoisting
 is the one thing that could move them.
 
+`docker compose up` builds and serves it — see [Quick start](#option-a--docker-docker-compose-up-and-nothing-else);
+nothing below is needed to *run* it. To work on it with hot reload instead:
+
 ```bash
 npm run dev                  # the API, on :4000   (in the repo root)
 cd web && npm install
 npm run dev                  # the UI, on :5173
 ```
 
-Then open <http://localhost:5173> and sign in — the login form lists the seeded accounts.
+Either way, open <http://localhost:5173> and sign in — the login form lists the seeded
+accounts.
 
 | | |
 |---|---|
 | `npm run dev` | Vite dev server on :5173, proxying `/api/*` to the API on :4000 |
-| `npm run build` | typecheck, then a production bundle in `web/dist` |
+| `npm run build` | typecheck, then a production bundle in `web/dist` — what [web/Dockerfile](web/Dockerfile) runs |
 | `npm run api:types` | regenerate `src/api/types.ts` from the API's OpenAPI document |
 | `npm run lint` / `npm run typecheck` | its own configs, React rules included |
 
 Three decisions worth knowing:
 
-- **No CORS on the API.** Vite's dev proxy forwards `/api/*` server-side, so the browser
-  only ever sees one origin. The API's middleware stack and its "exactly two anonymous
-  routes" surface are untouched by the existence of a frontend.
+- **No CORS on the API.** Vite's dev proxy forwards `/api/*` server-side, and in the
+  compose stack [web/nginx.conf](web/nginx.conf) does the same thing, so the browser only
+  ever sees one origin. The API's middleware stack and its "exactly two anonymous routes"
+  surface are untouched by the existence of a frontend — the bundle is served by its own
+  nginx, not mounted onto Express.
 - **The client types are generated, not written.** `npm run api:types` dumps the
   OpenAPI document (itself generated from the zod schemas `validate()` enforces) and
   turns it into `web/src/api/types.ts`. So the chain from what the server enforces to

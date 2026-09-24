@@ -7,8 +7,8 @@ import react from '@vitejs/plugin-react';
  * The browser only ever talks to `localhost:5173`; Vite forwards `/api/*` to the API on
  * 4000 server-side, so every request is same-origin and the API's middleware stack —
  * including its "exactly two anonymous routes" surface — is untouched by the existence
- * of a frontend. In production the built bundle is served from the same origin as the
- * API for the same reason.
+ * of a frontend. The compose stack keeps that property: there the bundle is served by
+ * nginx, which forwards `/api/*` to the api service (see `nginx.conf`).
  *
  * `rewrite` strips the prefix: the client calls `/api/pipeline`, the API sees
  * `/pipeline`. Keeping the prefix on the client side means one place decides where the

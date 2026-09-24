@@ -34,8 +34,8 @@ export class ApiError extends Error {
 }
 
 /**
- * `/api` is rewritten to the API's root by the Vite dev proxy (and by the same-origin
- * deployment in production), so nothing below knows or cares where the API lives.
+ * `/api` is rewritten to the API's root by the Vite dev proxy in development and by
+ * nginx in the compose stack, so nothing below knows or cares where the API lives.
  */
 const BASE = '/api';
 
