@@ -190,6 +190,21 @@ export function candidate(
   return apiFetch(`/candidates/${encodeURIComponent(id)}`);
 }
 
+export interface CandidateSearch {
+  q?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+/**
+ * The candidate directory, a page at a time. The API applies the same role split as
+ * `candidate()`: a recruiter's `q` also matches email and phone, an interviewer's matches
+ * name only, and an interviewer's items carry no contact fields.
+ */
+export function candidates(search: CandidateSearch = {}): Promise<Schemas['CandidatePage']> {
+  return apiFetch('/candidates', { query: { ...search } });
+}
+
 export function candidateAudit(id: string): Promise<Schemas['CandidateAudit']> {
   return apiFetch(`/audit/candidates/${encodeURIComponent(id)}`);
 }

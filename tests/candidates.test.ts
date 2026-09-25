@@ -188,3 +188,109 @@ describe('GET /candidates/:id — the guards around it', () => {
     expect(emitted).toEqual([]);
   });
 });
+
+function list(search: string, email?: string) {
+  const call = request(app).get(`/candidates${search}`);
+  return email ? call.set('authorization', `Bearer ${tokens[email]}`) : call;
+}
+
+describe('GET /candidates — pagination and search', () => {
+  it('defaults to page 1 of 20, ordered by name', async () => {
+    const response = await list('', RECRUITER);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ page: 1, pageSize: 20 });
+    expect(response.body.items.length).toBeLessThanOrEqual(20);
+    expect(response.body.totalPages).toBe(Math.ceil(response.body.total / 20));
+
+    const names = (response.body.items as Array<{ name: string }>).map((c) => c.name);
+    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
+  });
+
+  it('pages without overlap', async () => {
+    const first = await list('?pageSize=2&page=1', RECRUITER);
+    const second = await list('?pageSize=2&page=2', RECRUITER);
+
+    expect(first.body.items).toHaveLength(2);
+    expect(second.body.items).toHaveLength(2);
+    const ids = [...first.body.items, ...second.body.items].map((c: { id: string }) => c.id);
+    expect(new Set(ids).size).toBe(4);
+  });
+
+  it('returns an empty page past the end, not an error', async () => {
+    const response = await list('?page=100000', RECRUITER);
+
+    expect(response.status).toBe(200);
+    expect(response.body.items).toEqual([]);
+  });
+
+  it('searches name case-insensitively for a recruiter', async () => {
+    const response = await list('?q=AMARA', RECRUITER);
+
+    expect(response.status).toBe(200);
+    expect(response.body.items.map((c: { id: string }) => c.id)).toContain(CANDIDATE_IDS.c01);
+    expect(response.body.items.map((c: { id: string }) => c.id)).not.toContain(CANDIDATE_IDS.c02);
+  });
+
+  it('searches email and phone for a recruiter', async () => {
+    const byEmail = await list('?q=bruno.costa@', RECRUITER);
+    const byPhone = await list(`?q=${encodeURIComponent('7946 0101')}`, RECRUITER);
+
+    expect(byEmail.body.items.map((c: { id: string }) => c.id)).toEqual([CANDIDATE_IDS.c02]);
+    expect(byPhone.body.items.map((c: { id: string }) => c.id)).toEqual([CANDIDATE_IDS.c01]);
+  });
+
+  it('treats a blank q as no search', async () => {
+    const blank = await list('?q=%20%20', RECRUITER);
+    const none = await list('', RECRUITER);
+
+    expect(blank.body.total).toBe(none.body.total);
+  });
+
+  it('400s an out-of-range page size', async () => {
+    const response = await list('?pageSize=101', RECRUITER);
+
+    expect(response.status).toBe(400);
+    expect(response.body.errors[0].path).toBe('query.pageSize');
+  });
+
+  it('scopes an interviewer to assigned candidates, name and id only', async () => {
+    const response = await list('', ASSIGNED_INTERVIEWER);
+
+    expect(response.status).toBe(200);
+    const ids = response.body.items.map((c: { id: string }) => c.id);
+    expect(ids).toEqual(expect.arrayContaining([CANDIDATE_IDS.c01, CANDIDATE_IDS.c03, CANDIDATE_IDS.c07]));
+    expect(ids).not.toContain(CANDIDATE_IDS.c02);
+    for (const item of response.body.items) {
+      expect(Object.keys(item).sort()).toEqual(['id', 'name']);
+    }
+    expect(response.text).not.toMatch(/@example\.net/);
+  });
+
+  it('returns nothing for an interviewer assigned to no round', async () => {
+    const response = await list('', UNASSIGNED_INTERVIEWER);
+
+    expect(response.body).toMatchObject({ items: [], total: 0, totalPages: 0 });
+  });
+
+  /**
+   * The oracle case: if `q` reached `email` for an interviewer, this would return Amara
+   * and confirm a fragment of her address.
+   */
+  it('does not let an interviewer search contact fields', async () => {
+    emitted.length = 0;
+    const response = await list('?q=amara.osei@example', ASSIGNED_INTERVIEWER);
+
+    expect(response.status).toBe(200);
+    expect(response.body.items).toEqual([]);
+    expect(emitted.length).toBeGreaterThan(0);
+    for (const statement of emitted) {
+      expect(statement, `restricted column named in: ${statement}`).not.toMatch(/email|phone/i);
+    }
+  });
+
+  it('401s without a token and 403s a hiring manager', async () => {
+    expect((await list('')).status).toBe(401);
+    expect((await list('', HIRING_MANAGER)).status).toBe(403);
+  });
+});

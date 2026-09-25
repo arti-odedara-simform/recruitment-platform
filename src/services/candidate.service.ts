@@ -4,11 +4,22 @@ import type { Actor } from '../domain/actor.js';
 import {
   findCandidateForInterviewer,
   findCandidateForRecruiter,
+  listCandidatesForInterviewer,
+  listCandidatesForRecruiter,
+  type CandidateListFilter,
   type InterviewerCandidateView,
   type RecruiterCandidateView,
 } from '../repositories/candidate.repository.js';
 
 export type CandidateView = RecruiterCandidateView | InterviewerCandidateView;
+
+export interface CandidateList {
+  items: CandidateView[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
 
 /**
  * Picks the field set from the caller's role, and nothing else.
@@ -44,6 +55,36 @@ function readFor(actor: Actor, candidateId: string): Promise<CandidateView | nul
      * already rejects them; this arm exists so the switch is exhaustive and a role added
      * to the enum later fails to compile here rather than falling through to a view.
      */
+    case UserRole.HIRING_MANAGER:
+      throw new ForbiddenError('Candidate records are not available to hiring managers.');
+  }
+}
+
+/**
+ * The list counterpart to `getCandidate`: the same role branch before the read, so an
+ * interviewer's page is assigned candidates only, in the narrow field set.
+ */
+export async function listCandidates(actor: Actor, filter: CandidateListFilter): Promise<CandidateList> {
+  const { items, total } = await listFor(actor, filter);
+
+  return {
+    items,
+    page: filter.page,
+    pageSize: filter.pageSize,
+    total,
+    totalPages: Math.ceil(total / filter.pageSize),
+  };
+}
+
+function listFor(
+  actor: Actor,
+  filter: CandidateListFilter,
+): Promise<{ items: CandidateView[]; total: number }> {
+  switch (actor.role) {
+    case UserRole.RECRUITER:
+      return listCandidatesForRecruiter(actor, filter);
+    case UserRole.INTERVIEWER:
+      return listCandidatesForInterviewer(actor, filter);
     case UserRole.HIRING_MANAGER:
       throw new ForbiddenError('Candidate records are not available to hiring managers.');
   }

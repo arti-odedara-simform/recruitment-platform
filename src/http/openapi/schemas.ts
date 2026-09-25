@@ -26,7 +26,7 @@ export const problemSchema = z
 export const PROBLEM_RESPONSES = {
   badRequest: {
     status: 400,
-    description: 'The request failed shape validation, before any domain logic ran (PLAN.md §7).',
+    description: 'The request failed shape validation).',
     schema: problemSchema,
   },
   unauthorized: {

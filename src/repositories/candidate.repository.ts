@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../db/client.js';
 import { asInterviewer } from './rls.repository.js';
 import type { Actor } from '../domain/actor.js';
@@ -111,4 +112,98 @@ export async function findCandidateForInterviewer(
     },
     select: CANDIDATE_SELECT.interviewer,
   }));
+}
+
+export interface CandidateListFilter {
+  /** Free-text search, already trimmed. Omitted lists everyone in scope. */
+  q?: string | undefined;
+  /** 1-based. */
+  page: number;
+  pageSize: number;
+}
+
+export interface CandidatePage<T> {
+  items: T[];
+  total: number;
+}
+
+/**
+ * The same ordering on both paths, with `id` as the tiebreak so two candidates sharing
+ * a name cannot swap between pages.
+ */
+const LIST_ORDER = [{ name: 'asc' }, { id: 'asc' }] satisfies Prisma.CandidateOrderByWithRelationInput[];
+
+function pageArgs(filter: CandidateListFilter): { skip: number; take: number } {
+  return { skip: (filter.page - 1) * filter.pageSize, take: filter.pageSize };
+}
+
+/**
+ * Recruiters search contact details too — they are on their side of PLAN.md §4, and
+ * "who emailed us from this address" is a recruiter question.
+ */
+export async function listCandidatesForRecruiter(
+  _actor: Actor,
+  filter: CandidateListFilter,
+): Promise<CandidatePage<RecruiterCandidateView>> {
+  const where: Prisma.CandidateWhereInput = filter.q
+    ? {
+        OR: [
+          { name: { contains: filter.q, mode: 'insensitive' } },
+          { email: { contains: filter.q, mode: 'insensitive' } },
+          { phone: { contains: filter.q } },
+        ],
+      }
+    : {};
+
+  const [items, total] = await prisma.$transaction([
+    prisma.candidate.findMany({
+      where,
+      select: CANDIDATE_SELECT.recruiter,
+      orderBy: LIST_ORDER,
+      ...pageArgs(filter),
+    }),
+    prisma.candidate.count({ where }),
+  ]);
+
+  return { items, total };
+}
+
+/**
+ * `q` matches `name` and nothing else. Searching `email` here would not return an
+ * address, but it would answer "does any of my candidates' addresses contain `x`?" —
+ * enough to recover one a character at a time. Not naming the column in the `where`
+ * also keeps this path's SQL free of it, the same guarantee the detail read makes.
+ */
+export async function listCandidatesForInterviewer(
+  actor: Actor,
+  filter: CandidateListFilter,
+): Promise<CandidatePage<InterviewerCandidateView>> {
+  const where: Prisma.CandidateWhereInput = {
+    applications: {
+      some: {
+        rounds: {
+          some: {
+            assignments: {
+              some: { interviewerId: actor.id },
+            },
+          },
+        },
+      },
+    },
+    ...(filter.q ? { name: { contains: filter.q, mode: 'insensitive' } } : {}),
+  };
+
+  return asInterviewer(actor, async (db) => {
+    const [items, total] = await Promise.all([
+      db.candidate.findMany({
+        where,
+        select: CANDIDATE_SELECT.interviewer,
+        orderBy: LIST_ORDER,
+        ...pageArgs(filter),
+      }),
+      db.candidate.count({ where }),
+    ]);
+
+    return { items, total };
+  });
 }

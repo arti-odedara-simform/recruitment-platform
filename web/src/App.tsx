@@ -3,6 +3,7 @@ import type { Schemas } from './api/client.js';
 import { useSession } from './auth/session.js';
 import { ApplicationDetail } from './routes/ApplicationDetail.js';
 import { Candidates } from './routes/Candidates.js';
+import { Directory } from './routes/Directory.js';
 import { Login } from './routes/Login.js';
 import { MyRounds } from './routes/MyRounds.js';
 import { Pipeline } from './routes/Pipeline.js';
@@ -24,6 +25,7 @@ const NAV: Record<Role, Array<{ to: string; label: string }>> = {
   RECRUITER: [
     { to: '/', label: 'Pipeline' },
     { to: '/candidates', label: 'Candidates' },
+    { to: '/directory', label: 'Directory' },
     { to: '/reqs', label: 'Reqs' },
   ],
   HIRING_MANAGER: [
@@ -98,6 +100,11 @@ export function App() {
           <Route path="/" element={<Home role={user.role} />} />
           <Route path="/reqs" element={<Reqs />} />
           <Route path="/candidates" element={<Candidates />} />
+          {/*
+            Recruiters only in the nav: a hiring manager's `GET /candidates` is a 403, so
+            the link would only lead to the error notice.
+          */}
+          <Route path="/directory" element={<Directory />} />
           {/*
             An application is addressed by the pair it is unique on, the same pair the API
             routes take — so a link to "this candidate on this req" is one URL a recruiter

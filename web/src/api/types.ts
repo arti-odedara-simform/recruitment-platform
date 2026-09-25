@@ -202,6 +202,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Candidates in the caller’s scope, paginated and searchable
+         * @description The list counterpart to `GET /candidates/:id`, with the same split.
+         *
+         *     - **Recruiter** — every candidate, full record. `q` matches name, email or phone.
+         *     - **Interviewer** — only candidates they are assigned to interview, name and id only. `q` matches **name only**: searching contact fields would let an interviewer recover an address one character at a time from which rows come back.
+         *
+         *     Ordered by name, then id, so pages are stable. A page past the end is an empty `items`, not an error.
+         */
+        get: operations["getCandidates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/pipeline": {
         parameters: {
             query?: never;
@@ -631,6 +656,14 @@ export interface components {
             id: string;
             name: string;
         };
+        /** @description One page of candidates, by name. */
+        CandidatePage: {
+            items: (components["schemas"]["CandidateRecruiterView"] | components["schemas"]["CandidateInterviewerView"])[];
+            page: number;
+            pageSize: number;
+            total: number;
+            totalPages: number;
+        };
         /** @description One open req. `stages` carries only the stages that hold candidates, so an empty array is an open req nobody has applied to. */
         PipelineRole: {
             /** Format: uuid */
@@ -827,7 +860,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApplicationListItem"][];
                 };
             };
-            /** @description The request failed shape validation, before any domain logic ran (PLAN.md §7). */
+            /** @description The request failed shape validation). */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -964,7 +997,7 @@ export interface operations {
                     "application/json": components["schemas"]["StageTransitionResult"];
                 };
             };
-            /** @description The request failed shape validation, before any domain logic ran (PLAN.md §7). */
+            /** @description The request failed shape validation). */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -1111,7 +1144,7 @@ export interface operations {
                     "application/json": components["schemas"]["CandidateAudit"];
                 };
             };
-            /** @description The request failed shape validation, before any domain logic ran (PLAN.md §7). */
+            /** @description The request failed shape validation). */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -1180,7 +1213,7 @@ export interface operations {
                     "application/json": components["schemas"]["LoginResponse"];
                 };
             };
-            /** @description The request failed shape validation, before any domain logic ran (PLAN.md §7). */
+            /** @description The request failed shape validation). */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -1249,7 +1282,7 @@ export interface operations {
                     "application/json": components["schemas"]["CandidateRecruiterView"] | components["schemas"]["CandidateInterviewerView"];
                 };
             };
-            /** @description The request failed shape validation, before any domain logic ran (PLAN.md §7). */
+            /** @description The request failed shape validation). */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -1287,6 +1320,57 @@ export interface operations {
             };
         };
     };
+    getCandidates: {
+        parameters: {
+            query?: {
+                q?: string;
+                page?: number;
+                pageSize?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of candidates. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CandidatePage"];
+                };
+            };
+            /** @description The request failed shape validation). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description No token, a malformed Authorization header, or a token that is expired, forged or issued to an account that no longer exists. Carries `WWW-Authenticate: Bearer`. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Hiring managers: candidate records are not on their side of PLAN.md §4. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     getPipeline: {
         parameters: {
             query?: {
@@ -1307,7 +1391,7 @@ export interface operations {
                     "application/json": components["schemas"]["PipelineRole"][];
                 };
             };
-            /** @description The request failed shape validation, before any domain logic ran (PLAN.md §7). */
+            /** @description The request failed shape validation). */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -1358,7 +1442,7 @@ export interface operations {
                     "application/json": components["schemas"]["StuckApplication"][];
                 };
             };
-            /** @description The request failed shape validation, before any domain logic ran (PLAN.md §7). */
+            /** @description The request failed shape validation). */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -1407,7 +1491,7 @@ export interface operations {
                     "application/json": components["schemas"]["Role"][];
                 };
             };
-            /** @description The request failed shape validation, before any domain logic ran (PLAN.md §7). */
+            /** @description The request failed shape validation). */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -1579,7 +1663,7 @@ export interface operations {
                     "application/json": components["schemas"]["CreatedRound"];
                 };
             };
-            /** @description The request failed shape validation, before any domain logic ran (PLAN.md §7). */
+            /** @description The request failed shape validation). */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -1637,7 +1721,7 @@ export interface operations {
                     "application/json": components["schemas"]["Round"];
                 };
             };
-            /** @description The request failed shape validation, before any domain logic ran (PLAN.md §7). */
+            /** @description The request failed shape validation). */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -1767,7 +1851,7 @@ export interface operations {
                     "application/json": components["schemas"]["PeerFeedback"][];
                 };
             };
-            /** @description The request failed shape validation, before any domain logic ran (PLAN.md §7). */
+            /** @description The request failed shape validation). */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -1900,7 +1984,7 @@ export interface operations {
                     "application/json": components["schemas"]["Round"][];
                 };
             };
-            /** @description The request failed shape validation, before any domain logic ran (PLAN.md §7). */
+            /** @description The request failed shape validation). */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -1959,7 +2043,7 @@ export interface operations {
                     "application/json": components["schemas"]["PublicUser"][];
                 };
             };
-            /** @description The request failed shape validation, before any domain logic ran (PLAN.md §7). */
+            /** @description The request failed shape validation). */
             400: {
                 headers: {
                     [name: string]: unknown;

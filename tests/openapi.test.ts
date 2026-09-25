@@ -100,6 +100,7 @@ describe('the OpenAPI document', () => {
       '/audit/candidates/{id}',
       '/auth/login',
       '/auth/me',
+      '/candidates',
       '/candidates/{id}',
       '/health',
       '/me/rounds',
@@ -174,6 +175,7 @@ describe('the OpenAPI document', () => {
       'ApplicationStage',
       'CandidateAudit',
       'CandidateInterviewerView',
+      'CandidatePage',
       'CandidateRecruiterView',
       'CreatedRound',
       'Feedback',
@@ -287,6 +289,23 @@ describe('documented response shapes match real responses', () => {
 
       expect(response.status, `as ${email}`).toBe(200);
       expect(() => schema.parse(response.body), `as ${email}`).not.toThrow();
+    }
+  });
+
+  it('GET /candidates 200 — recruiter and interviewer arms', async () => {
+    const schema = documentedSchema('/candidates', 'get', 200);
+
+    for (const email of [RECRUITER_EMAIL, INTERVIEWER_EMAIL]) {
+      const login = await request(app)
+        .post('/auth/login')
+        .send({ email, password: DEV_PASSWORD });
+      const response = await request(app)
+        .get('/candidates')
+        .set('authorization', `Bearer ${login.body.token}`);
+
+      expect(response.status, `as ${email}`).toBe(200);
+      expect(() => schema.parse(response.body), `as ${email}`).not.toThrow();
+      expect(response.body.items.length, `as ${email}`).toBeGreaterThan(0);
     }
   });
 

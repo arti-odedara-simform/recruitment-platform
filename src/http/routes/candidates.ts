@@ -1,9 +1,9 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { UserRole } from '@prisma/client';
-import { params, validate } from '../middleware/validate.js';
+import { params, query, validate } from '../middleware/validate.js';
 import { actorOf, requireAuth, requireRole } from '../middleware/auth.js';
-import { getCandidate } from '../../services/candidate.service.js';
+import { getCandidate, listCandidates } from '../../services/candidate.service.js';
 import { registerOperation } from '../openapi/registry.js';
 import { PROBLEM_RESPONSES } from '../openapi/schemas.js';
 
@@ -92,5 +92,78 @@ candidatesRouter.get(
   async (req: Request, res: Response) => {
     const { id } = params<CandidateParams>(req);
     res.status(200).json(await getCandidate(actorOf(req), id));
+  },
+);
+
+const DEFAULT_PAGE_SIZE = 20;
+
+const listQuery = z.object({
+  q: z
+    .string()
+    .trim()
+    .max(100)
+    .optional()
+    .transform((value) => value || undefined)
+    .meta({
+      description:
+        'Case-insensitive substring search. Recruiters match name, email and phone; ' +
+        'interviewers match name only.',
+      examples: ['amara'],
+    }),
+  page: z.coerce.number().int().min(1).default(1).meta({ description: '1-based page number.' }),
+  pageSize: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .default(DEFAULT_PAGE_SIZE)
+    .meta({ description: `Rows per page. Defaults to ${DEFAULT_PAGE_SIZE}.` }),
+});
+
+type ListQuery = z.infer<typeof listQuery>;
+
+const candidatePageSchema = z
+  .strictObject({
+    items: z.array(z.union([recruiterViewSchema, interviewerViewSchema])),
+    page: z.number().int(),
+    pageSize: z.number().int(),
+    total: z.number().int(),
+    totalPages: z.number().int(),
+  })
+  .meta({ id: 'CandidatePage', description: 'One page of candidates, by name.' });
+
+registerOperation({
+  method: 'get',
+  path: '/candidates',
+  tags: ['Candidates'],
+  summary: 'Candidates in the caller’s scope, paginated and searchable',
+  description:
+    'The list counterpart to `GET /candidates/:id`, with the same split.\n\n' +
+    '- **Recruiter** — every candidate, full record. `q` matches name, email or phone.\n' +
+    '- **Interviewer** — only candidates they are assigned to interview, name and id ' +
+    'only. `q` matches **name only**: searching contact fields would let an interviewer ' +
+    'recover an address one character at a time from which rows come back.\n\n' +
+    'Ordered by name, then id, so pages are stable. A page past the end is an empty ' +
+    '`items`, not an error.',
+  request: { query: listQuery },
+  responses: [
+    { status: 200, description: 'One page of candidates.', schema: candidatePageSchema },
+    PROBLEM_RESPONSES.badRequest,
+    PROBLEM_RESPONSES.unauthorized,
+    {
+      ...PROBLEM_RESPONSES.forbidden,
+      description: 'Hiring managers: candidate records are not on their side of PLAN.md §4.',
+    },
+  ],
+});
+
+candidatesRouter.get(
+  '/candidates',
+  requireAuth,
+  requireRole(UserRole.RECRUITER, UserRole.INTERVIEWER),
+  validate({ query: listQuery }),
+  async (req: Request, res: Response) => {
+    const { q, page, pageSize } = query<ListQuery>(req);
+    res.status(200).json(await listCandidates(actorOf(req), { q, page, pageSize }));
   },
 );
