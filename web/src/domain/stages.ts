@@ -49,3 +49,20 @@ export function isTerminal(stage: Stage): boolean {
 export function overrideTargets(from: Stage): readonly Stage[] {
   return isTerminal(from) ? [] : STAGES.filter((stage) => stage !== from);
 }
+
+/**
+ * What a person reads. The enum is the wire format and stays SHOUTED in the API; on
+ * screen a stage is a word, and its colour comes from `stage-<name>` in styles.css.
+ */
+const STAGE_LABELS: Record<Stage, string> = {
+  APPLIED: 'Applied',
+  SCREEN: 'Screen',
+  INTERVIEW: 'Interview',
+  OFFER: 'Offer',
+  HIRED: 'Hired',
+  REJECTED: 'Rejected',
+};
+
+export function stageLabel(stage: string): string {
+  return STAGE_LABELS[stage as Stage] ?? stage;
+}

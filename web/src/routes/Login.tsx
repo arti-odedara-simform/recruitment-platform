@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { ApiError } from '../api/client.js';
 import { useSession } from '../auth/session.js';
+import { Icon, Person } from '../components/ui.js';
 
 /** The seeded accounts, so a reviewer can get in without reading the README first. */
 const DEMO = [
-  { email: 'rachel.recruiter@example.com', role: 'Recruiter' },
-  { email: 'hana.manager@example.com', role: 'Hiring manager' },
-  { email: 'ingrid.interviewer@example.com', role: 'Interviewer' },
+  { email: 'rachel.recruiter@example.com', name: 'Rachel Ahmed', role: 'Recruiter' },
+  { email: 'hana.manager@example.com', name: 'Hana Suzuki', role: 'Hiring manager' },
+  { email: 'ingrid.interviewer@example.com', name: 'Ingrid Olsen', role: 'Interviewer' },
 ];
 
 export function Login() {
@@ -36,49 +37,71 @@ export function Login() {
 
   return (
     <div className="centered">
-      <form className="card login" onSubmit={submit}>
-        <h1>Recruitment Pipeline</h1>
-        <p className="muted">Sign in with a seeded account.</p>
+      <div className="login-wrap">
+        <div className="login-brand">
+          <span className="logo">
+            <Icon name="logo" />
+          </span>
+          Recruitment Pipeline
+        </div>
 
-        <label>
-          Email
-          <input
-            type="email"
-            value={email}
-            autoComplete="username"
-            onChange={(event) => setEmail(event.target.value)}
-            required
-          />
-        </label>
+        <form className="card login" onSubmit={submit}>
+          <div className="login-head">
+            <h1>Welcome back</h1>
+            <p className="muted">Sign in to see your pipeline.</p>
+          </div>
 
-        <label>
-          Password
-          <input
-            type="password"
-            value={password}
-            autoComplete="current-password"
-            onChange={(event) => setPassword(event.target.value)}
-            required
-          />
-        </label>
+          <label className="field">
+            Work email
+            <input
+              type="email"
+              value={email}
+              autoComplete="username"
+              onChange={(event) => setEmail(event.target.value)}
+              required
+            />
+          </label>
 
-        {error !== null && <p className="error">{error}</p>}
+          <label className="field">
+            Password
+            <input
+              type="password"
+              value={password}
+              autoComplete="current-password"
+              onChange={(event) => setPassword(event.target.value)}
+              required
+            />
+          </label>
 
-        <button type="submit" disabled={busy}>
-          {busy ? 'Signing in…' : 'Sign in'}
-        </button>
+          {error !== null && (
+            <div className="notice error" role="alert">
+              <Icon name="alert" />
+              <span>{error}</span>
+            </div>
+          )}
 
-        <ul className="demo">
-          {DEMO.map((account) => (
-            <li key={account.email}>
-              <button type="button" className="link" onClick={() => setEmail(account.email)}>
-                {account.role}
-              </button>
-              <span className="muted">{account.email}</span>
-            </li>
-          ))}
-        </ul>
-      </form>
+          <button type="submit" className="block" disabled={busy}>
+            {busy ? 'Signing in…' : 'Sign in'}
+          </button>
+
+          <div className="demo">
+            <p className="divider">or try a demo account</p>
+            <div className="demo-list">
+              {DEMO.map((account) => (
+                <button
+                  key={account.email}
+                  type="button"
+                  className={account.email === email ? 'demo-account selected' : 'demo-account'}
+                  onClick={() => setEmail(account.email)}
+                  aria-pressed={account.email === email}
+                >
+                  <Person name={account.name} meta={`${account.role} · ${account.email}`} />
+                </button>
+              ))}
+            </div>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import type { Schemas } from '../api/client.js';
+import { Icon, StageBadge, formatDateTime, roleLabel, type IconName } from './ui.js';
 
 /**
  * The candidate's trace, as `GET /audit/candidates/:id` returns it: two append-only
@@ -16,19 +17,15 @@ import type { Schemas } from '../api/client.js';
 type Entry = Schemas['CandidateAudit']['timeline'][number];
 
 /** `AuditEvent.action` is a string in the API; these are the ones it currently writes. */
-const ACTIONS: Record<string, string> = {
-  ROLE_OPENED: 'Req opened',
-  APPLICATION_CREATED: 'Applied',
-  ROUND_CREATED: 'Round scheduled',
-  ASSIGNMENT_CREATED: 'Interviewer assigned',
-  FEEDBACK_SUBMITTED: 'Feedback submitted',
-  STAGE_ADVANCED: 'Stage advanced',
-  STAGE_OVERRIDDEN: 'Stage overridden',
+const ACTIONS: Record<string, { label: string; icon: IconName }> = {
+  ROLE_OPENED: { label: 'Requisition opened', icon: 'briefcase' },
+  APPLICATION_CREATED: { label: 'Added to requisition', icon: 'plus' },
+  ROUND_CREATED: { label: 'Interview scheduled', icon: 'calendar' },
+  ASSIGNMENT_CREATED: { label: 'Interviewer added to panel', icon: 'user' },
+  FEEDBACK_SUBMITTED: { label: 'Feedback submitted', icon: 'message' },
+  STAGE_ADVANCED: { label: 'Stage changed', icon: 'arrow' },
+  STAGE_OVERRIDDEN: { label: 'Stage overridden', icon: 'flag' },
 };
-
-function stamp(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-}
 
 /**
  * `STAGE_ADVANCED` and `STAGE_OVERRIDDEN` arrive twice — once as the transition row and
@@ -47,34 +44,41 @@ export function Timeline({ entries }: { entries: Entry[] }) {
   const rows = entries.filter((entry) => !isRedundant(entry));
 
   if (rows.length === 0) {
-    return <p className="muted pad">Nothing recorded yet.</p>;
+    return <p className="muted">No recorded activity yet.</p>;
   }
 
   return (
     <ol className="timeline">
-      {rows.map((entry) => (
-        <li key={entry.id} className={entry.type === 'STAGE_TRANSITION' ? 'event move' : 'event'}>
-          <span className="when muted">{stamp(entry.occurredAt)}</span>
-
-          {entry.type === 'STAGE_TRANSITION' ? (
-            <span className="what">
-              <span className="pill">{entry.fromStage}</span> →{' '}
-              <span className="pill">{entry.toStage}</span>
-              {entry.kind === 'OVERRIDE' && <span className="pill override">OVERRIDE</span>}
+      {rows.map((entry) => {
+        const move = entry.type === 'STAGE_TRANSITION';
+        const override = move && entry.kind === 'OVERRIDE';
+        const action = move ? null : ACTIONS[entry.action];
+        return (
+          <li key={entry.id} className={override ? 'event move override' : move ? 'event move' : 'event'}>
+            <span className="event-icon">
+              <Icon name={override ? 'flag' : move ? 'arrow' : (action?.icon ?? 'check')} />
             </span>
-          ) : (
-            <span className="what">{ACTIONS[entry.action] ?? entry.action}</span>
-          )}
+            <div className="event-body">
+              {move ? (
+                <span className="what">
+                  <StageBadge stage={entry.fromStage} />
+                  <Icon name="arrow" />
+                  <StageBadge stage={entry.toStage} />
+                  {override && <span className="badge warn plain">Override</span>}
+                </span>
+              ) : (
+                <span className="what">{action?.label ?? entry.action}</span>
+              )}
 
-          <span className="who muted">
-            {entry.actor.name} · {entry.actor.role}
-          </span>
+              <span className="meta">
+                {entry.actor.name} ({roleLabel(entry.actor.role)}) · {formatDateTime(entry.occurredAt)}
+              </span>
 
-          {entry.type === 'STAGE_TRANSITION' && entry.reason !== null && (
-            <p className="reason">{entry.reason}</p>
-          )}
-        </li>
-      ))}
+              {move && entry.reason !== null && <p className="reason">{entry.reason}</p>}
+            </div>
+          </li>
+        );
+      })}
     </ol>
   );
 }

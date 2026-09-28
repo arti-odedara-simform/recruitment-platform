@@ -1,6 +1,7 @@
 import { candidate as fetchCandidate } from '../api/client.js';
 import { useApi } from '../api/useApi.js';
 import { ErrorNotice, Loading } from './Feedback.js';
+import { formatDate } from './ui.js';
 
 /**
  * Contact details, which exist on exactly one path: `GET /candidates/:id` as a recruiter.
@@ -20,11 +21,10 @@ export function ContactCard({ candidateId }: { candidateId: string }) {
   return (
     <section className="card">
       <header className="card-head">
-        <h2>Contact details</h2>
-        <p className="muted">
-          Recruiter-only, and read one record at a time. No list endpoint in this app
-          carries an email or a phone number — not the pipeline, not the candidate list.
-        </p>
+        <div>
+          <h2>Contact</h2>
+          <p>Visible to recruiters only.</p>
+        </div>
       </header>
 
       {record.loading ? (
@@ -33,10 +33,6 @@ export function ContactCard({ candidateId }: { candidateId: string }) {
         <ErrorNotice error={record.error} onRetry={record.reload} />
       ) : record.data === null ? null : 'email' in record.data ? (
         <dl className="contact">
-          <div>
-            <dt>Name</dt>
-            <dd>{record.data.name}</dd>
-          </div>
           <div>
             <dt>Email</dt>
             <dd>
@@ -54,8 +50,8 @@ export function ContactCard({ candidateId }: { candidateId: string }) {
             </dd>
           </div>
           <div>
-            <dt>On file since</dt>
-            <dd className="muted">{new Date(record.data.createdAt).toLocaleDateString()}</dd>
+            <dt>Added</dt>
+            <dd className="muted">{formatDate(record.data.createdAt)}</dd>
           </div>
         </dl>
       ) : (
@@ -63,9 +59,7 @@ export function ContactCard({ candidateId }: { candidateId: string }) {
           Reachable only if this screen is ever rendered for an interviewer: the API
           answered with the narrow field set, and there is nothing to show.
         */
-        <p className="muted pad">
-          This account sees a candidate&rsquo;s name and nothing else.
-        </p>
+        <p className="muted pad">Contact details aren&rsquo;t available to your account.</p>
       )}
     </section>
   );

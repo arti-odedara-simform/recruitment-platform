@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { ApiError, advanceStage, overrideStage } from '../api/client.js';
 import { ErrorNotice } from './Feedback.js';
-import { ALLOWED, isTerminal, overrideTargets, type Stage } from '../domain/stages.js';
+import { Icon } from './ui.js';
+import { ALLOWED, isTerminal, overrideTargets, stageLabel, type Stage } from '../domain/stages.js';
 
 /**
  * The two ways an application moves, side by side and deliberately not alike.
@@ -67,35 +68,54 @@ export function StageControl({ candidateId, roleId, currentStage, onChanged }: P
     }
   }
 
+  const forward = advances.filter((stage) => stage !== 'REJECTED');
+  const canReject = advances.includes('REJECTED');
+
   return (
     <div className="stage-control">
       {isTerminal(currentStage) ? (
-        <p className="muted">
-          {currentStage} is terminal. Nothing moves out of it — not an advance, and not an
-          override. Reopening is a different act with its own record, and this API does not
-          have it yet.
-        </p>
+        <div className={currentStage === 'HIRED' ? 'notice ok' : 'notice info'}>
+          <Icon name={currentStage === 'HIRED' ? 'check' : 'flag'} />
+          <span>
+            {currentStage === 'HIRED'
+              ? 'Hired — this application is complete.'
+              : 'Rejected — this application is closed.'}{' '}
+            Its stage can no longer be changed.
+          </span>
+        </div>
       ) : (
         <>
           <div className="actions">
-            {advances.map((stage) => (
+            {forward.map((stage) => (
               <button
                 key={stage}
                 type="button"
-                className={stage === 'REJECTED' ? 'danger' : ''}
                 disabled={busy !== null}
                 onClick={() => run(stage, () => advanceStage(candidateId, roleId, stage))}
               >
-                {busy === stage ? 'Moving…' : `Advance to ${stage}`}
+                {busy === stage ? 'Moving…' : `Move to ${stageLabel(stage)}`}
+                {busy !== stage && <Icon name="arrow" />}
               </button>
             ))}
+            {canReject && (
+              <button
+                type="button"
+                className="danger"
+                disabled={busy !== null}
+                onClick={() => run('REJECTED', () => advanceStage(candidateId, roleId, 'REJECTED'))}
+              >
+                {busy === 'REJECTED' ? 'Rejecting…' : 'Reject'}
+              </button>
+            )}
             <button
               type="button"
-              className="link"
+              className="ghost"
+              style={{ marginLeft: 'auto' }}
               disabled={busy !== null}
               onClick={() => setOverriding((open) => !open)}
+              aria-expanded={overriding}
             >
-              {overriding ? 'Cancel override' : 'Override the stage instead'}
+              {overriding ? 'Cancel' : 'Skip to another stage…'}
             </button>
           </div>
 
@@ -110,51 +130,54 @@ export function StageControl({ candidateId, roleId, currentStage, onChanged }: P
                 );
               }}
             >
-              <p className="muted">
-                An override skips the machine — {currentStage} straight to wherever this
-                says. It is recorded as an OVERRIDE with your reason attached, in the same
-                transaction as the move, and it shows up in the candidate&rsquo;s timeline
-                as one.
-              </p>
+              <div>
+                <h3>Skip the usual order</h3>
+                <p className="muted small">
+                  This moves the candidate straight from {stageLabel(currentStage)} to the stage
+                  you pick. It&rsquo;s marked as an override in the activity history, with your
+                  reason.
+                </p>
+              </div>
 
-              <label>
+              <label className="field">
                 Move to
                 <select
                   value={target}
                   onChange={(event) => setTarget(event.target.value as Stage)}
                   required
                 >
-                  <option value="">Choose a stage…</option>
+                  <option value="">Choose a stage</option>
                   {targets.map((stage) => (
                     <option key={stage} value={stage}>
-                      {stage}
+                      {stageLabel(stage)}
                     </option>
                   ))}
                 </select>
               </label>
 
-              <label>
+              <label className="field">
                 Reason
                 <textarea
                   rows={3}
                   value={reason}
                   maxLength={1000}
-                  placeholder="Why the usual sequence is being stepped around."
+                  placeholder="e.g. Strong referral — team agreed to skip the phone screen."
                   onChange={(event) => setReason(event.target.value)}
                   required
                 />
+                <span className="hint">
+                  {trimmedReason.length < MIN_REASON
+                    ? `At least ${MIN_REASON} characters.`
+                    : `${trimmedReason.length} / 1000`}
+                </span>
               </label>
-              <p className="muted count-hint">
-                {trimmedReason.length} / 1000 — at least {MIN_REASON} characters, enforced by
-                the API and by the database.
-              </p>
 
-              <div className="actions">
+              <div className="actions end">
                 <button
                   type="submit"
                   disabled={busy !== null || target === '' || trimmedReason.length < MIN_REASON}
                 >
-                  {busy === 'override' ? 'Recording…' : 'Record override'}
+                  {busy === 'override' ? 'Saving…' : 'Move candidate'}
                 </button>
               </div>
             </form>
@@ -163,12 +186,12 @@ export function StageControl({ candidateId, roleId, currentStage, onChanged }: P
       )}
 
       {error !== null && (
-        <div className="stage-error">
+        <div className="stack">
           <ErrorNotice error={error} />
           {refused !== null && (
-            <p className="muted pad">
-              The stage machine allows{' '}
-              {refused.length === 0 ? 'nothing from here' : refused.join(', ')}.
+            <p className="muted small">
+              From here the candidate can move to{' '}
+              {refused.length === 0 ? 'no other stage' : refused.map(stageLabel).join(' or ')}.
             </p>
           )}
         </div>

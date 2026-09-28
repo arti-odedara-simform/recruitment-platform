@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { candidates, type Schemas } from '../api/client.js';
 import { useApi } from '../api/useApi.js';
 import { ErrorNotice, Loading } from '../components/Feedback.js';
+import { EmptyState, Icon, PageHeader, Person, formatDate } from '../components/ui.js';
 
 /**
  * Every candidate in the system, whether or not they are on a req — the one screen
@@ -99,130 +100,126 @@ export function Directory() {
   const last = data ? first + items.length - Math.min(1, items.length) : 0;
 
   return (
-    <section className="card">
-      <header className="card-head">
-        <h2>Directory</h2>
-        <p className="muted">
-          Every candidate on record, on a req or not. Search matches name, email or phone.
-        </p>
-      </header>
+    <div className="stack">
+      <PageHeader
+        title="Directory"
+        subtitle="Every candidate on record, whether or not they are on a requisition."
+      />
 
-      <div className="filters pad">
-        <label className="inline grow">
-          Search
-          <input
-            type="search"
-            className="search"
-            placeholder="Name, email or phone"
-            value={draft}
-            maxLength={100}
-            onChange={(event) => setDraft(event.target.value)}
-          />
-        </label>
-        <label className="inline">
-          Per page
-          <select
-            value={pageSize}
-            onChange={(event) => update({ pageSize: Number(event.target.value), page: 1 })}
-          >
-            {PAGE_SIZES.map((size) => (
-              <option key={size} value={size}>
-                {size}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      {/*
-        The table stays up while a new page loads — dimmed rather than swapped for a
-        spinner, so paging and typing do not make the screen jump.
-      */}
-      {result.error !== null ? (
-        <ErrorNotice error={result.error} onRetry={result.reload} />
-      ) : data === null ? (
-        <Loading label="Loading candidates…" />
-      ) : items.length === 0 ? (
-        <p className="muted pad">
-          {q === '' ? 'No candidates on record.' : `Nobody matches “${q}”.`}
-        </p>
-      ) : (
-        <table className={result.loading ? 'grid list stale' : 'grid list'} aria-busy={result.loading}>
-          <thead>
-            <tr>
-              <th>Name</th>
-              {showContact && (
-                <>
-                  <th>Email</th>
-                  <th>Phone</th>
-                  <th>Added</th>
-                </>
-              )}
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((row) => (
-              <tr key={row.id}>
-                <td>{row.name}</td>
-                {hasContact(row) && (
-                  <>
-                    <td className="muted">{row.email}</td>
-                    <td className="muted">{row.phone ?? '—'}</td>
-                    <td className="muted">{new Date(row.createdAt).toLocaleDateString()}</td>
-                  </>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-
-      {data !== null && data.total > 0 && (
-        <nav className="pager pad bordered" aria-label="Pagination">
-          <span className="muted">
-            {first}–{last} of {data.total}
-          </span>
-          <div className="pager-controls">
-            <button
-              type="button"
-              className="secondary"
-              disabled={page <= 1 || result.loading}
-              onClick={() => update({ page: 1 })}
-              aria-label="First page"
-            >
-              «
-            </button>
-            <button
-              type="button"
-              className="secondary"
-              disabled={page <= 1 || result.loading}
-              onClick={() => update({ page: page - 1 })}
-            >
-              Previous
-            </button>
-            <span className="muted">
-              Page {data.page} of {Math.max(data.totalPages, 1)}
+      <section className="card">
+        <div className="toolbar">
+          <label className="input-icon grow">
+            <span className="sr-only">Search</span>
+            <Icon name="search" />
+            <input
+              type="search"
+              placeholder="Search by name, email or phone"
+              value={draft}
+              maxLength={100}
+              onChange={(event) => setDraft(event.target.value)}
+            />
+          </label>
+          {data !== null && (
+            <span className="muted small num">
+              {data.total} {data.total === 1 ? 'candidate' : 'candidates'}
             </span>
-            <button
-              type="button"
-              className="secondary"
-              disabled={page >= data.totalPages || result.loading}
-              onClick={() => update({ page: page + 1 })}
-            >
-              Next
-            </button>
-            <button
-              type="button"
-              className="secondary"
-              disabled={page >= data.totalPages || result.loading}
-              onClick={() => update({ page: data.totalPages })}
-              aria-label="Last page"
-            >
-              »
-            </button>
+          )}
+        </div>
+
+        {/*
+          The table stays up while a new page loads — dimmed rather than swapped for a
+          spinner, so paging and typing do not make the screen jump.
+        */}
+        {result.error !== null ? (
+          <ErrorNotice error={result.error} onRetry={result.reload} />
+        ) : data === null ? (
+          <Loading label="Loading candidates…" />
+        ) : items.length === 0 ? (
+          <EmptyState
+            title={q === '' ? 'No candidates on record' : `Nobody matches “${q}”`}
+            hint={q === '' ? undefined : 'Check the spelling, or search by email or phone instead.'}
+          />
+        ) : (
+          <div className="scroll">
+            <table className={result.loading ? 'grid list stale' : 'grid list'} aria-busy={result.loading}>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  {showContact && (
+                    <>
+                      <th>Email</th>
+                      <th>Phone</th>
+                      <th>Added</th>
+                    </>
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((row) => (
+                  <tr key={row.id}>
+                    <td>
+                      <Person name={row.name} />
+                    </td>
+                    {hasContact(row) && (
+                      <>
+                        <td>
+                          <a className="row-link muted" href={`mailto:${row.email}`}>
+                            {row.email}
+                          </a>
+                        </td>
+                        <td className="muted num">{row.phone ?? '—'}</td>
+                        <td className="muted">{formatDate(row.createdAt)}</td>
+                      </>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </nav>
-      )}
-    </section>
+        )}
+
+        {data !== null && data.total > 0 && (
+          <nav className="pager" aria-label="Pagination">
+            <span className="muted small num">
+              Showing {first}–{last} of {data.total}
+            </span>
+            <div className="pager-controls">
+              <label>
+                Rows
+                <select
+                  value={pageSize}
+                  onChange={(event) => update({ pageSize: Number(event.target.value), page: 1 })}
+                >
+                  {PAGE_SIZES.map((size) => (
+                    <option key={size} value={size}>
+                      {size}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                className="secondary sm"
+                disabled={page <= 1 || result.loading}
+                onClick={() => update({ page: page - 1 })}
+              >
+                <Icon name="back" /> Previous
+              </button>
+              <span className="muted">
+                Page {data.page} of {Math.max(data.totalPages, 1)}
+              </span>
+              <button
+                type="button"
+                className="secondary sm"
+                disabled={page >= data.totalPages || result.loading}
+                onClick={() => update({ page: page + 1 })}
+              >
+                Next <Icon name="chevron" />
+              </button>
+            </div>
+          </nav>
+        )}
+      </section>
+    </div>
   );
 }

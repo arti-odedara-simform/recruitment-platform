@@ -4,7 +4,8 @@ import { pipeline, stuck } from '../api/client.js';
 import type { Schemas } from '../api/client.js';
 import { useApi } from '../api/useApi.js';
 import { ErrorNotice, Loading } from '../components/Feedback.js';
-import { STAGES, TERMINAL, type Stage } from '../domain/stages.js';
+import { EmptyState, PageHeader, Person, StageBadge, days as dayCount } from '../components/ui.js';
+import { STAGES, TERMINAL, stageLabel, type Stage } from '../domain/stages.js';
 
 /**
  * The §6 view: counts per stage per open req, with ageing.
@@ -29,7 +30,17 @@ function ageClass(days: number | undefined, stage?: Stage): string {
   if (days === undefined || (stage !== undefined && TERMINAL.includes(stage))) return '';
   if (days >= 21) return 'age-bad';
   if (days >= 10) return 'age-warn';
-  return 'age-ok';
+  return '';
+}
+
+/** A waiting time as a badge whose colour says whether it is a problem yet. */
+function WaitBadge({ days }: { days: number }) {
+  const tone = days >= 21 ? 'bad' : days >= 10 ? 'warn' : '';
+  return (
+    <span className={`badge plain ${tone}`}>
+      {dayCount(days)}
+    </span>
+  );
 }
 
 function StageCell({ cell }: { cell: Schemas['PipelineStage'] | undefined }) {
@@ -40,8 +51,8 @@ function StageCell({ cell }: { cell: Schemas['PipelineStage'] | undefined }) {
   return (
     <td className={ageClass(cell.oldestAgeDays, cell.stage)}>
       <span className="count">{cell.candidates}</span>
-      <span className="age" title={`average ${cell.averageAgeDays}d, oldest ${cell.oldestAgeDays}d`}>
-        {cell.averageAgeDays}d avg · {cell.oldestAgeDays}d max
+      <span className="age" title={`Average ${dayCount(cell.averageAgeDays)} in stage, oldest ${dayCount(cell.oldestAgeDays)}`}>
+        avg {Math.round(cell.averageAgeDays)}d · max {Math.round(cell.oldestAgeDays)}d
       </span>
     </td>
   );
@@ -57,28 +68,81 @@ export function Pipeline() {
   if (reqs.error !== null) return <ErrorNotice error={reqs.error} onRetry={reqs.reload} />;
 
   const rows = reqs.data ?? [];
+  const stuckRows = waiting.data ?? [];
+
+  const totals = new Map<Stage, number>();
+  for (const req of rows) {
+    for (const cell of req.stages) {
+      totals.set(cell.stage, (totals.get(cell.stage) ?? 0) + cell.candidates);
+    }
+  }
+  const active = STAGES.filter((stage) => !TERMINAL.includes(stage)).reduce(
+    (sum, stage) => sum + (totals.get(stage) ?? 0),
+    0,
+  );
 
   return (
     <div className="stack">
+      <PageHeader
+        title="Pipeline"
+        subtitle="Where every open requisition stands, and who has been waiting too long."
+      />
+
+      <div className="stats">
+        <div className="stat">
+          <span className="stat-label">Open requisitions</span>
+          <span className="stat-value">{rows.length}</span>
+        </div>
+        <div className="stat">
+          <span className="stat-label">Active candidates</span>
+          <span className="stat-value">{active}</span>
+          <span className="stat-hint">Not yet hired or rejected</span>
+        </div>
+        <div className="stat">
+          <span className="stat-label">In offer</span>
+          <span className="stat-value">{totals.get('OFFER') ?? 0}</span>
+        </div>
+        <div className="stat">
+          <span className="stat-label">Hired</span>
+          <span className="stat-value">{totals.get('HIRED') ?? 0}</span>
+        </div>
+        <div className={stuckRows.length > 0 ? 'stat warn' : 'stat'}>
+          <span className="stat-label">Waiting over {days} days</span>
+          <span className="stat-value">{waiting.data === null ? '–' : stuckRows.length}</span>
+        </div>
+      </div>
+
       <section className="card">
         <header className="card-head">
-          <h2>Pipeline</h2>
-          <p className="muted">
-            Counts and time-in-stage per open req. One grouped aggregate — no candidate row
-            leaves the database to produce this.
-          </p>
+          <div>
+            <h2>By stage</h2>
+            <p>Candidates per stage, with how long they have been there.</p>
+          </div>
+          <div className="legend" aria-hidden>
+            <span>
+              <i className="swatch warn" /> Oldest 10+ days
+            </span>
+            <span>
+              <i className="swatch bad" /> Oldest 21+ days
+            </span>
+          </div>
         </header>
 
         {rows.length === 0 ? (
-          <p className="muted pad">No open reqs.</p>
+          <EmptyState title="No open requisitions" hint="Open a req to start building a pipeline." />
         ) : (
           <div className="scroll">
-            <table className="grid">
+            <table className="grid funnel">
               <thead>
                 <tr>
-                  <th className="sticky">Req</th>
+                  <th className="sticky">Requisition</th>
                   {STAGES.map((stage) => (
-                    <th key={stage}>{stage}</th>
+                    <th key={stage}>
+                      <span className={`th-stage stage-${stage.toLowerCase()}`}>
+                        <span className="dot" />
+                        <span className="label">{stageLabel(stage)}</span>
+                      </span>
+                    </th>
                   ))}
                   <th>Total</th>
                 </tr>
@@ -105,23 +169,23 @@ export function Pipeline() {
       </section>
 
       <section className="card">
-        <header className="card-head row">
+        <header className="card-head">
           <div>
-            <h2>Waiting too long</h2>
-            <p className="muted">
-              Applications in the same stage for more than {days} days. Hired and rejected
-              are excluded — they are done, not stuck.
+            <h2>Needs attention</h2>
+            <p>
+              Candidates who have been in the same stage for more than {days} days. Hired and
+              rejected candidates are left out.
             </p>
           </div>
-          <label className="inline">
-            Days
-            <input
-              type="number"
-              min={1}
-              max={365}
-              value={days}
-              onChange={(event) => setDays(Math.max(1, Number(event.target.value) || 1))}
-            />
+          <label className="actions small muted">
+            Threshold
+            <select value={days} onChange={(event) => setDays(Number(event.target.value))}>
+              {[7, 14, 21, 30, 60].map((option) => (
+                <option key={option} value={option}>
+                  {option} days
+                </option>
+              ))}
+            </select>
           </label>
         </header>
 
@@ -129,36 +193,42 @@ export function Pipeline() {
           <ErrorNotice error={waiting.error} onRetry={waiting.reload} />
         ) : waiting.loading ? (
           <Loading label="Checking…" />
-        ) : (waiting.data ?? []).length === 0 ? (
-          <p className="muted pad">Nothing has been waiting that long.</p>
+        ) : stuckRows.length === 0 ? (
+          <EmptyState title="All caught up" hint={`Nobody has been waiting more than ${days} days.`} />
         ) : (
-          <table className="grid list">
-            <thead>
-              <tr>
-                <th>Candidate</th>
-                <th>Req</th>
-                <th>Stage</th>
-                <th>Waiting</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(waiting.data ?? []).map((row) => (
-                <tr key={row.applicationId}>
-                  <td>
-                    {/* Straight to the screen that can do something about it. */}
-                    <Link className="go" to={`/applications/${row.candidate.id}/${row.roleId}`}>
-                      {row.candidate.name}
-                    </Link>
-                  </td>
-                  <td className="muted">{row.roleTitle}</td>
-                  <td>
-                    <span className="pill">{row.currentStage}</span>
-                  </td>
-                  <td className={ageClass(row.daysInStage)}>{row.daysInStage}d</td>
+          <div className="scroll">
+            <table className="grid list">
+              <thead>
+                <tr>
+                  <th>Candidate</th>
+                  <th>Requisition</th>
+                  <th>Stage</th>
+                  <th>Waiting</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {stuckRows.map((row) => (
+                  <tr key={row.applicationId}>
+                    <td>
+                      {/* Straight to the screen that can do something about it. */}
+                      <Person name={row.candidate.name}>
+                        <Link className="row-link" to={`/applications/${row.candidate.id}/${row.roleId}`}>
+                          {row.candidate.name}
+                        </Link>
+                      </Person>
+                    </td>
+                    <td className="muted">{row.roleTitle}</td>
+                    <td>
+                      <StageBadge stage={row.currentStage} />
+                    </td>
+                    <td>
+                      <WaitBadge days={row.daysInStage} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
     </div>

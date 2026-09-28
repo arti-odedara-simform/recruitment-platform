@@ -1,4 +1,4 @@
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
+import { Link, NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import type { Schemas } from './api/client.js';
 import { useSession } from './auth/session.js';
 import { ApplicationDetail } from './routes/ApplicationDetail.js';
@@ -9,6 +9,7 @@ import { MyRounds } from './routes/MyRounds.js';
 import { Pipeline } from './routes/Pipeline.js';
 import { Reqs } from './routes/Reqs.js';
 import { RoundDetail } from './routes/RoundDetail.js';
+import { Avatar, Icon, roleLabel } from './components/ui.js';
 
 type Role = Schemas['PublicUser']['role'];
 
@@ -26,12 +27,12 @@ const NAV: Record<Role, Array<{ to: string; label: string }>> = {
     { to: '/', label: 'Pipeline' },
     { to: '/candidates', label: 'Candidates' },
     { to: '/directory', label: 'Directory' },
-    { to: '/reqs', label: 'Reqs' },
+    { to: '/reqs', label: 'Requisitions' },
   ],
   HIRING_MANAGER: [
     { to: '/', label: 'Pipeline' },
     { to: '/candidates', label: 'Candidates' },
-    { to: '/reqs', label: 'Reqs' },
+    { to: '/reqs', label: 'Requisitions' },
   ],
   INTERVIEWER: [{ to: '/', label: 'My rounds' }],
 };
@@ -52,7 +53,11 @@ export function App() {
   // Until the stored token has been checked against `GET /auth/me`, showing either the
   // app or the login form would be a guess.
   if (!ready) {
-    return <div className="centered muted">Loading…</div>;
+    return (
+      <div className="centered">
+        <span className="spinner" role="status" aria-label="Loading" />
+      </div>
+    );
   }
 
   /**
@@ -70,32 +75,43 @@ export function App() {
   }
 
   return (
-    <div className="app">
-      <header className="top">
-        <strong className="brand">Recruitment Pipeline</strong>
-        <nav>
-          {NAV[user.role].map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              // Without `end`, `/` would match every path and stay highlighted everywhere.
-              end={item.to === '/'}
-              className={({ isActive }) => (isActive ? 'active' : '')}
-            >
-              {item.label}
-            </NavLink>
-          ))}
-        </nav>
-        <div className="who">
-          <span>{user.name}</span>
-          <span className="pill role">{user.role}</span>
-          <button type="button" className="link" onClick={signOut}>
-            Sign out
-          </button>
+    <>
+      <header className="topbar">
+        <div className="topbar-inner">
+          <Link to="/" className="brand">
+            <span className="logo">
+              <Icon name="logo" />
+            </span>
+            Recruitment Pipeline
+          </Link>
+          <nav className="mainnav" aria-label="Main">
+            {NAV[user.role].map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                // Without `end`, `/` would match every path and stay highlighted everywhere.
+                end={item.to === '/'}
+                className={({ isActive }) => (isActive ? 'active' : '')}
+              >
+                {item.label}
+              </NavLink>
+            ))}
+          </nav>
+          <div className="account">
+            <span className="account-text">
+              <span className="account-name">{user.name}</span>
+              <span className="account-role">{roleLabel(user.role)}</span>
+            </span>
+            <Avatar name={user.name} />
+            <button type="button" className="ghost sm" onClick={signOut} title="Sign out">
+              <Icon name="logout" />
+              <span className="sr-only">Sign out</span>
+            </button>
+          </div>
         </div>
       </header>
 
-      <main>
+      <main className="app">
         <Routes>
           <Route path="/" element={<Home role={user.role} />} />
           <Route path="/reqs" element={<Reqs />} />
@@ -130,6 +146,6 @@ export function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
-    </div>
+    </>
   );
 }

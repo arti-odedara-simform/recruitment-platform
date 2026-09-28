@@ -17,9 +17,14 @@ import { ErrorNotice } from './Feedback.js';
 
 const MAX_TITLE = 200;
 
-export function OpenReqForm({ onOpened }: { onOpened: (req: Schemas['Role']) => void }) {
+export function OpenReqForm({
+  onOpened,
+  onCancel,
+}: {
+  onOpened: (req: Schemas['Role']) => void;
+  onCancel: () => void;
+}) {
   const managers = useApi(() => users('HIRING_MANAGER'), []);
-  const [open, setOpen] = useState(false);
   const [title, setTitle] = useState('');
   const [hiringManagerId, setHiringManagerId] = useState('');
   const [error, setError] = useState<ApiError | Error | null>(null);
@@ -39,7 +44,6 @@ export function OpenReqForm({ onOpened }: { onOpened: (req: Schemas['Role']) => 
       const req = await createRole({ title: trimmedTitle, hiringManagerId });
       setTitle('');
       setHiringManagerId('');
-      setOpen(false);
       onOpened(req);
     } catch (cause) {
       setError(cause instanceof Error ? cause : new Error(String(cause)));
@@ -48,77 +52,69 @@ export function OpenReqForm({ onOpened }: { onOpened: (req: Schemas['Role']) => 
     }
   }
 
-  if (!open) {
-    return (
-      <div className="pad bordered">
-        <button type="button" onClick={() => setOpen(true)}>
-          Open a req
-        </button>
-      </div>
-    );
-  }
-
   return (
-    <form className="pad bordered create" onSubmit={submit}>
-      <p className="muted">
-        A req opens OPEN — there is no status to choose, and closing one is a separate act
-        with its own audit row that this API does not have yet. The opening is written with
-        an audit event in the same transaction.
-      </p>
+    <form className="card" onSubmit={submit}>
+      <header className="card-head">
+        <div>
+          <h2>Open a requisition</h2>
+          <p>It opens straight away, and the hiring manager can see it as soon as it does.</p>
+        </div>
+      </header>
 
-      <div className="create-fields">
-        <label>
-          Title
-          <input
-            type="text"
-            value={title}
-            maxLength={MAX_TITLE}
-            placeholder="Staff Backend Engineer"
-            onChange={(event) => setTitle(event.target.value)}
-            required
-          />
-          {fieldErrors['body.title'] !== undefined && (
-            <span className="error">{fieldErrors['body.title']}</span>
-          )}
-        </label>
-
-        <label>
-          Hiring manager
-          {managers.error !== null ? (
-            <ErrorNotice error={managers.error} onRetry={managers.reload} />
-          ) : (
-            <select
-              value={hiringManagerId}
-              onChange={(event) => setHiringManagerId(event.target.value)}
-              disabled={managers.loading}
+      <div className="card-body form">
+        <div className="form-row">
+          <label className="field">
+            Job title
+            <input
+              type="text"
+              value={title}
+              maxLength={MAX_TITLE}
+              placeholder="e.g. Staff Backend Engineer"
+              onChange={(event) => setTitle(event.target.value)}
+              autoFocus
               required
-            >
-              <option value="">
-                {managers.loading ? 'Loading…' : 'Choose a hiring manager…'}
-              </option>
-              {(managers.data ?? []).map((user) => (
-                <option key={user.id} value={user.id}>
-                  {user.name}
-                </option>
-              ))}
-            </select>
-          )}
-          {fieldErrors['body.hiringManagerId'] !== undefined && (
-            <span className="error">{fieldErrors['body.hiringManagerId']}</span>
-          )}
-        </label>
+            />
+            {fieldErrors['body.title'] !== undefined && (
+              <span className="error">{fieldErrors['body.title']}</span>
+            )}
+          </label>
+
+          <label className="field">
+            Hiring manager
+            {managers.error !== null ? (
+              <ErrorNotice error={managers.error} onRetry={managers.reload} />
+            ) : (
+              <select
+                value={hiringManagerId}
+                onChange={(event) => setHiringManagerId(event.target.value)}
+                disabled={managers.loading}
+                required
+              >
+                <option value="">{managers.loading ? 'Loading…' : 'Choose a hiring manager'}</option>
+                {(managers.data ?? []).map((user) => (
+                  <option key={user.id} value={user.id}>
+                    {user.name}
+                  </option>
+                ))}
+              </select>
+            )}
+            {fieldErrors['body.hiringManagerId'] !== undefined && (
+              <span className="error">{fieldErrors['body.hiringManagerId']}</span>
+            )}
+          </label>
+        </div>
+
+        {error !== null && <ErrorNotice error={error} />}
       </div>
 
-      <div className="actions">
-        <button type="submit" disabled={busy || trimmedTitle === '' || hiringManagerId === ''}>
-          {busy ? 'Opening…' : 'Open req'}
-        </button>
-        <button type="button" className="link" disabled={busy} onClick={() => setOpen(false)}>
+      <footer className="card-foot actions end">
+        <button type="button" className="secondary" disabled={busy} onClick={onCancel}>
           Cancel
         </button>
-      </div>
-
-      {error !== null && <ErrorNotice error={error} />}
+        <button type="submit" disabled={busy || trimmedTitle === '' || hiringManagerId === ''}>
+          {busy ? 'Opening…' : 'Open requisition'}
+        </button>
+      </footer>
     </form>
   );
 }

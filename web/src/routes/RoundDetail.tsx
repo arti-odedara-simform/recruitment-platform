@@ -6,6 +6,7 @@ import { useApi } from '../api/useApi.js';
 import { useSession } from '../auth/session.js';
 import { ErrorNotice, Loading } from '../components/Feedback.js';
 import { RATINGS, RatingPill } from '../components/Rating.js';
+import { Avatar, DateTile, EmptyState, Icon, StageBadge, formatDateTime, relative } from '../components/ui.js';
 
 /**
  * One round: what it is, what the panel said, and — for an assigned interviewer who has
@@ -23,16 +24,15 @@ import { RATINGS, RatingPill } from '../components/Rating.js';
 
 const NOTES_MAX = 5000;
 
-function stamp(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-}
+const stamp = formatDateTime;
 
 function Entry({ entry, mine }: { entry: Schemas['PeerFeedback']; mine: boolean }) {
   return (
     <li className={mine ? 'fb mine' : 'fb'}>
       <div className="fb-head">
+        <Avatar name={entry.interviewer.name} size="sm" />
         <strong>{entry.interviewer.name}</strong>
-        {mine && <span className="pill role">You</span>}
+        {mine && <span className="badge accent plain">You</span>}
         <RatingPill value={entry.rating} />
         <span className="muted when">{stamp(entry.submittedAt)}</span>
       </div>
@@ -84,9 +84,9 @@ function FeedbackForm({ roundId, onSubmitted }: { roundId: string; onSubmitted: 
     <form className="fb-form" onSubmit={submit}>
       <fieldset className="rating-set">
         <legend>Your rating</legend>
-        <div className="rating">
+        <div className="rating-options">
           {RATINGS.map((option) => (
-            <label key={option.value} className="chip">
+            <label key={option.value} className={`chip r${option.value}`}>
               <input
                 type="radio"
                 name="rating"
@@ -94,6 +94,7 @@ function FeedbackForm({ roundId, onSubmitted }: { roundId: string; onSubmitted: 
                 checked={rating === option.value}
                 onChange={() => setRating(option.value)}
               />
+              <span className="n">{option.value}</span>
               <span>{option.label}</span>
             </label>
           ))}
@@ -103,23 +104,23 @@ function FeedbackForm({ roundId, onSubmitted }: { roundId: string; onSubmitted: 
         )}
       </fieldset>
 
-      <label>
+      <label className="field">
         Notes
         <textarea
           rows={6}
           value={notes}
           maxLength={NOTES_MAX}
-          placeholder="What you asked, what they did, and what it tells you."
+          placeholder="What you asked, how they approached it, and what it tells you about the role."
           onChange={(event) => setNotes(event.target.value)}
           required
         />
+        <span className="hint count-hint">
+          {trimmed.length} / {NOTES_MAX}
+          {fieldErrors['body.notes'] !== undefined && (
+            <span className="error"> — {fieldErrors['body.notes']}</span>
+          )}
+        </span>
       </label>
-      <p className="muted count-hint">
-        {trimmed.length} / {NOTES_MAX}
-        {fieldErrors['body.notes'] !== undefined && (
-          <span className="error"> — {fieldErrors['body.notes']}</span>
-        )}
-      </p>
 
       {/* A 409 is handled above and the form is about to be replaced, so it is not shown
           as an error here; anything else is worth reading. */}
@@ -131,9 +132,7 @@ function FeedbackForm({ roundId, onSubmitted }: { roundId: string; onSubmitted: 
         <button type="submit" disabled={!ready || busy}>
           {busy ? 'Submitting…' : 'Submit feedback'}
         </button>
-        <span className="muted">
-          One submission per interviewer per round — it cannot be edited afterwards.
-        </span>
+        <span className="muted small">You can&rsquo;t edit feedback once it&rsquo;s submitted.</span>
       </div>
     </form>
   );
@@ -162,77 +161,117 @@ export function RoundDetail() {
     round.reload();
   }
 
+  const r = round.data;
+  const backLabel = user?.role === 'INTERVIEWER' ? 'My rounds' : 'Pipeline';
+
   return (
     <div className="stack">
-      <section className="card">
-        <header className="card-head row">
-          <div>
-            <h2>{round.data.candidate.name}</h2>
-            <p className="muted">
-              {round.data.stage} round · scheduled {stamp(round.data.scheduledAt)} · the
-              application is in {round.data.currentStage}
-            </p>
-          </div>
-          {/*
-            Home is `/` for every role, but it is not the same screen for every role, so
-            the label follows the destination rather than assuming the reader is on the
-            panel — a recruiter reaching a round detail goes back to the pipeline.
-          */}
-          <Link className="go" to="/">
-            ← {user?.role === 'INTERVIEWER' ? 'My rounds' : 'Pipeline'}
-          </Link>
-        </header>
-
-        <p className="muted pad">
-          Feedback never moves an application on its own — a recruiter advances the stage,
-          explicitly. Ratings here are recorded, not tallied into a verdict.
-        </p>
-      </section>
-
-      <section className="card">
-        <header className="card-head">
-          <h2>Panel feedback</h2>
-          <p className="muted">
-            Everyone assigned to this round, oldest first. Submissions are never merged and
-            never overwritten.
-          </p>
-        </header>
-
-        {panel.loading ? (
-          <Loading label="Loading feedback…" />
-        ) : panel.error !== null ? (
-          <ErrorNotice error={panel.error} onRetry={panel.reload} />
-        ) : entries.length === 0 ? (
-          <p className="muted pad">Nobody has submitted yet.</p>
-        ) : (
-          <ul className="fb-list">
-            {entries.map((entry) => (
-              <Entry key={entry.id} entry={entry} mine={entry.interviewerId === user?.id} />
-            ))}
-          </ul>
-        )}
-      </section>
-
-      {canSubmit && (
+      <div>
+        {/*
+          Home is `/` for every role, but it is not the same screen for every role, so
+          the label follows the destination rather than assuming the reader is on the
+          panel — a recruiter reaching a round detail goes back to the pipeline.
+        */}
+        <Link className="back" to="/">
+          <Icon name="back" /> {backLabel}
+        </Link>
         <section className="card">
-          <header className="card-head">
-            <h2>Your feedback</h2>
-            <p className="muted">
-              Yours alone — submitting does not overwrite or merge with anyone else&rsquo;s.
-            </p>
-          </header>
-          <div className="pad">
-            <FeedbackForm roundId={id} onSubmitted={reloadAll} />
+          <div className="card-body hero">
+            <DateTile iso={r.scheduledAt} />
+            <div className="hero-text">
+              <h1>
+                {r.candidate.name}
+              </h1>
+              <div className="hero-meta">
+                <StageBadge stage={r.stage} />
+                <span>round</span>
+                <span className="sep">•</span>
+                <span>
+                  {stamp(r.scheduledAt)} ({relative(r.scheduledAt)})
+                </span>
+              </div>
+            </div>
+            <span className="muted small" style={{ marginLeft: 'auto' }}>
+              Candidate is currently at <StageBadge stage={r.currentStage} />
+            </span>
           </div>
         </section>
-      )}
+      </div>
 
-      {mine !== null && (
-        <p className="muted pad">
-          You submitted on {stamp(mine.submittedAt)}. A second submission for the same round
-          is rejected by the database, not silently applied.
-        </p>
-      )}
+      <div className="layout-2">
+        <div className="stack">
+          {canSubmit && (
+            <section className="card">
+              <header className="card-head">
+                <div>
+                  <h2>Your feedback</h2>
+                  <p>Your rating is recorded as you give it — it isn&rsquo;t combined with anyone else&rsquo;s.</p>
+                </div>
+              </header>
+              <div className="card-body">
+                <FeedbackForm roundId={id} onSubmitted={reloadAll} />
+              </div>
+            </section>
+          )}
+
+          {mine !== null && (
+            <div className="notice ok" role="status">
+              <Icon name="check" />
+              <span>You submitted your feedback on {stamp(mine.submittedAt)}.</span>
+            </div>
+          )}
+
+          <section className="card">
+            <header className="card-head">
+              <div>
+                <h2>Panel feedback</h2>
+                <p>In the order it was submitted.</p>
+              </div>
+              {entries.length > 0 && (
+                <span className="muted small">
+                  {entries.length} {entries.length === 1 ? 'response' : 'responses'}
+                </span>
+              )}
+            </header>
+
+            {panel.loading ? (
+              <Loading label="Loading feedback…" />
+            ) : panel.error !== null ? (
+              <ErrorNotice error={panel.error} onRetry={panel.reload} />
+            ) : entries.length === 0 ? (
+              <EmptyState title="No feedback yet" hint="Responses appear here as the panel submits them." />
+            ) : (
+              <ul className="fb-list">
+                {entries.map((entry) => (
+                  <Entry key={entry.id} entry={entry} mine={entry.interviewerId === user?.id} />
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
+
+        <aside className="card">
+          <header className="card-head">
+            <h2>How ratings work</h2>
+          </header>
+          <div className="card-body stack">
+            <ul className="side-list" style={{ margin: '-20px -20px 0' }}>
+              {RATINGS.map((option) => (
+                <li key={option.value}>
+                  <span>
+                    <RatingPill value={option.value} />
+                  </span>
+                  <span className="muted small">{option.value} of 4</span>
+                </li>
+              ))}
+            </ul>
+            <p className="muted small">
+              There&rsquo;s no neutral option — every rating is a lean one way or the other.
+              Feedback doesn&rsquo;t move the candidate on its own; the recruiter decides.
+            </p>
+          </div>
+        </aside>
+      </div>
     </div>
   );
 }

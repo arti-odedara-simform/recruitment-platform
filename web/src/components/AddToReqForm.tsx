@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react';
-import { ApiError, applications, createApplication, roles } from '../api/client.js';
+import { useEffect, useState } from 'react';
+import { ApiError, candidates, createApplication, roles } from '../api/client.js';
 import type { Schemas } from '../api/client.js';
 import { useApi } from '../api/useApi.js';
 import { ErrorNotice } from './Feedback.js';
+import { Icon, Person } from './ui.js';
 
 /**
  * Putting a candidate onto a req.
@@ -11,43 +12,43 @@ import { ErrorNotice } from './Feedback.js';
  * transaction, and a picker that lists reqs a recruiter cannot use is a picker that
  * teaches them to ignore its errors.
  *
- * The candidate side is honest about a gap rather than papering over it. This API has no
- * candidate directory — `GET /candidates/:id` reads one record and nothing lists them —
- * so the names offered here are the candidates already on some req, gathered from
- * `GET /applications`. Someone brand new to the system is reachable only by id, which is
- * what the free-text option is for, and not a hidden limitation.
+ * Candidates are found through `GET /candidates` — the directory — so someone who has
+ * never been on a req is as reachable as someone who is on three. The search is
+ * debounced and capped at one short page: this is a picker, not a second directory.
  */
 
-/** The sentinel that swaps the picker for a raw id field; not a candidate id. */
-const BY_ID = 'by-id';
+const SEARCH_DEBOUNCE_MS = 250;
+const RESULTS = 8;
 
-function directory(rows: Schemas['ApplicationListItem'][]): Array<{ id: string; name: string }> {
-  const byId = new Map(rows.map((row) => [row.candidate.id, row.candidate]));
-  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
-}
+type Candidate = Schemas['CandidatePage']['items'][number];
 
 export function AddToReqForm({
   onAdded,
+  onClose,
 }: {
   /** Refetch: the new row belongs in the list this form sits under. */
   onAdded: () => void;
+  onClose: () => void;
 }) {
-  // Deliberately unfiltered by the screen's own filters — the pool of candidates a
-  // recruiter can reach should not shrink because they are looking at one req.
-  const known = useApi(() => applications({ roleStatus: 'ALL' }), []);
   const openReqs = useApi(() => roles('OPEN'), []);
 
-  const [open, setOpen] = useState(false);
-  const [choice, setChoice] = useState('');
-  const [typedId, setTypedId] = useState('');
+  const [draft, setDraft] = useState('');
+  const [q, setQ] = useState('');
+  const [picked, setPicked] = useState<Candidate | null>(null);
   const [roleId, setRoleId] = useState('');
   const [error, setError] = useState<ApiError | Error | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const candidates = useMemo(() => directory(known.data ?? []), [known.data]);
-  const candidateId = choice === BY_ID ? typedId.trim() : choice;
+  useEffect(() => {
+    const timer = window.setTimeout(() => setQ(draft.trim()), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [draft]);
+
+  const found = useApi(() => candidates({ q, page: 1, pageSize: RESULTS }), [q]);
+
   const fieldErrors = error instanceof ApiError ? error.fieldErrors : {};
   const duplicate = error instanceof ApiError && error.status === 409;
+  const candidateId = picked?.id ?? '';
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -58,11 +59,8 @@ export function AddToReqForm({
 
     try {
       await createApplication({ candidateId, roleId });
-      setChoice('');
-      setTypedId('');
-      setRoleId('');
-      setOpen(false);
       onAdded();
+      onClose();
     } catch (cause) {
       setError(cause instanceof Error ? cause : new Error(String(cause)));
 
@@ -78,110 +76,112 @@ export function AddToReqForm({
     }
   }
 
-  if (!open) {
-    return (
-      <div className="pad bordered">
-        <button type="button" onClick={() => setOpen(true)}>
-          Put a candidate on a req
-        </button>
-      </div>
-    );
-  }
+  const results = found.data?.items ?? [];
 
   return (
-    <form className="pad bordered create" onSubmit={submit}>
-      <p className="muted">
-        The application starts at APPLIED — there is no stage to choose here, because every
-        move after this one belongs to the stage machine.
-      </p>
+    <form className="card" onSubmit={submit}>
+      <header className="card-head">
+        <div>
+          <h2>Add a candidate to a requisition</h2>
+          <p>They start at Applied, and move on from there.</p>
+        </div>
+      </header>
 
-      <div className="create-fields">
-        <label>
-          Candidate
-          {known.error !== null ? (
-            <ErrorNotice error={known.error} onRetry={known.reload} />
-          ) : (
-            <select
-              value={choice}
-              onChange={(event) => setChoice(event.target.value)}
-              disabled={known.loading}
-              required
-            >
-              <option value="">{known.loading ? 'Loading…' : 'Choose a candidate…'}</option>
-              {candidates.map((candidate) => (
-                <option key={candidate.id} value={candidate.id}>
-                  {candidate.name}
-                </option>
-              ))}
-              <option value={BY_ID}>Someone else — by id…</option>
-            </select>
-          )}
-          {fieldErrors['body.candidateId'] !== undefined && (
-            <span className="error">{fieldErrors['body.candidateId']}</span>
-          )}
-        </label>
+      <div className="card-body form">
+        <div className="form-row">
+          <div className="field picker">
+            <label className="field" htmlFor="candidate-search">
+              Candidate
+            </label>
+            {picked === null ? (
+              <>
+                <div className="input-icon">
+                  <Icon name="search" />
+                  <input
+                    id="candidate-search"
+                    type="search"
+                    placeholder="Search by name, email or phone"
+                    value={draft}
+                    maxLength={100}
+                    onChange={(event) => setDraft(event.target.value)}
+                    autoFocus
+                  />
+                </div>
+                {found.error !== null ? (
+                  <ErrorNotice error={found.error} onRetry={found.reload} />
+                ) : (
+                  <ul className="picker-results" aria-label="Matching candidates" aria-busy={found.loading}>
+                    {found.data !== null && results.length === 0 ? (
+                      <li className="empty">{q === '' ? 'No candidates on record.' : `Nobody matches “${q}”.`}</li>
+                    ) : (
+                      results.map((row) => (
+                        <li key={row.id}>
+                          <button type="button" aria-pressed={false} onClick={() => setPicked(row)}>
+                            <Person name={row.name} meta={'email' in row ? row.email : undefined} />
+                          </button>
+                        </li>
+                      ))
+                    )}
+                  </ul>
+                )}
+              </>
+            ) : (
+              <div className="demo-account selected">
+                <Person name={picked.name} meta={'email' in picked ? picked.email : undefined} />
+                <button type="button" className="link small" style={{ marginLeft: 'auto' }} onClick={() => setPicked(null)}>
+                  Change
+                </button>
+              </div>
+            )}
+            {fieldErrors['body.candidateId'] !== undefined && (
+              <span className="error">{fieldErrors['body.candidateId']}</span>
+            )}
+          </div>
 
-        {choice === BY_ID && (
-          <label>
-            Candidate id
-            <input
-              type="text"
-              value={typedId}
-              placeholder="00000000-0000-0000-0000-000000000000"
-              onChange={(event) => setTypedId(event.target.value)}
-              required
-            />
-            <span className="muted">
-              The names above are candidates already on a req — this API has nothing that
-              lists the rest. An unknown id is refused by the foreign key, as a 404.
-            </span>
+          <label className="field">
+            Requisition
+            {openReqs.error !== null ? (
+              <ErrorNotice error={openReqs.error} onRetry={openReqs.reload} />
+            ) : (
+              <select
+                value={roleId}
+                onChange={(event) => setRoleId(event.target.value)}
+                disabled={openReqs.loading}
+                required
+              >
+                <option value="">{openReqs.loading ? 'Loading…' : 'Choose an open requisition'}</option>
+                {(openReqs.data ?? []).map((req) => (
+                  <option key={req.id} value={req.id}>
+                    {req.title}
+                  </option>
+                ))}
+              </select>
+            )}
+            {fieldErrors['body.roleId'] !== undefined && (
+              <span className="error">{fieldErrors['body.roleId']}</span>
+            )}
           </label>
-        )}
+        </div>
 
-        <label>
-          Req
-          {openReqs.error !== null ? (
-            <ErrorNotice error={openReqs.error} onRetry={openReqs.reload} />
+        {error !== null &&
+          (duplicate ? (
+            <div className="notice info" role="status">
+              <Icon name="check" />
+              <span>{picked?.name ?? 'This candidate'} is already on that requisition.</span>
+            </div>
           ) : (
-            <select
-              value={roleId}
-              onChange={(event) => setRoleId(event.target.value)}
-              disabled={openReqs.loading}
-              required
-            >
-              <option value="">{openReqs.loading ? 'Loading…' : 'Choose an open req…'}</option>
-              {(openReqs.data ?? []).map((req) => (
-                <option key={req.id} value={req.id}>
-                  {req.title}
-                </option>
-              ))}
-            </select>
-          )}
-          {fieldErrors['body.roleId'] !== undefined && (
-            <span className="error">{fieldErrors['body.roleId']}</span>
-          )}
-        </label>
+            <ErrorNotice error={error} />
+          ))}
       </div>
 
-      <div className="actions">
-        <button type="submit" disabled={busy || candidateId === '' || roleId === ''}>
-          {busy ? 'Adding…' : 'Add to req'}
-        </button>
-        <button type="button" className="link" disabled={busy} onClick={() => setOpen(false)}>
+      <footer className="card-foot actions end">
+        <button type="button" className="secondary" disabled={busy} onClick={onClose}>
           Cancel
         </button>
-      </div>
-
-      {error !== null && (
-        <div className="stage-error">
-          <ErrorNotice error={error} />
-          {duplicate && (
-            <p className="muted pad">
-              Already on that req — the list below has been refetched, so the row is there.
-            </p>
-          )}
-        </div>
-      )}
+        <button type="submit" disabled={busy || candidateId === '' || roleId === ''}>
+          {busy ? 'Adding…' : 'Add to requisition'}
+        </button>
+      </footer>
     </form>
   );
 }

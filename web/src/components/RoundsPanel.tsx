@@ -11,7 +11,14 @@ import type { Schemas } from '../api/client.js';
 import { useApi } from '../api/useApi.js';
 import { ErrorNotice, Loading } from './Feedback.js';
 import { RatingMark } from './Rating.js';
-import { STAGES, type Stage } from '../domain/stages.js';
+import { Avatar, DateTile, EmptyState, Icon, StageBadge, formatDateTime, relative } from './ui.js';
+import { stageLabel, type Stage } from '../domain/stages.js';
+
+/**
+ * The stages an interview is held for. The API accepts any stage and does not check it
+ * against the application's; the picker offers the ones a recruiter would actually book.
+ */
+const ROUND_STAGES: readonly Stage[] = ['SCREEN', 'INTERVIEW', 'OFFER'];
 
 /**
  * Rounds for one application, and the two recruiter actions on them: schedule one, and
@@ -22,10 +29,6 @@ import { STAGES, type Stage } from '../domain/stages.js';
  * path. So this panel shows who is already on a round before it offers to add anyone: the
  * roster arrives on the recruiter's round view and nowhere else.
  */
-
-function stamp(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-}
 
 /** `datetime-local` speaks local wall-clock time; the API takes an ISO instant. */
 function toLocalInputValue(at: Date): string {
@@ -50,7 +53,7 @@ function AssignForm({
   const available = interviewers.filter((user) => !assigned.has(user.id));
 
   if (available.length === 0) {
-    return <p className="muted">Every interviewer is already on this round.</p>;
+    return <p className="muted small">Everyone available is already on this panel.</p>;
   }
 
   async function submit(event: React.FormEvent) {
@@ -83,14 +86,14 @@ function AssignForm({
 
   return (
     <form className="assign" onSubmit={submit}>
-      <label className="inline">
-        Assign
+      <label>
+        <span className="sr-only">Interviewer</span>
         <select
           value={interviewerId}
           onChange={(event) => setInterviewerId(event.target.value)}
           disabled={busy}
         >
-          <option value="">Choose an interviewer…</option>
+          <option value="">Add an interviewer…</option>
           {available.map((user) => (
             <option key={user.id} value={user.id}>
               {user.name}
@@ -98,8 +101,8 @@ function AssignForm({
           ))}
         </select>
       </label>
-      <button type="submit" disabled={busy || interviewerId === ''}>
-        {busy ? 'Assigning…' : 'Assign'}
+      <button type="submit" className="secondary" disabled={busy || interviewerId === ''}>
+        {busy ? 'Adding…' : 'Add to panel'}
       </button>
       {error !== null && !(error instanceof ApiError && error.status === 409) && (
         <ErrorNotice error={error} />
@@ -119,7 +122,8 @@ function ScheduleForm({
   currentStage: Stage;
   onScheduled: () => void;
 }) {
-  const [stage, setStage] = useState<Stage>(currentStage);
+  // A round is booked for a stage still ahead; a terminal application defaults to the loop.
+  const [stage, setStage] = useState<Stage>(ROUND_STAGES.includes(currentStage) ? currentStage : 'INTERVIEW');
   const [at, setAt] = useState(() => toLocalInputValue(new Date(Date.now() + 86_400_000)));
   const [error, setError] = useState<ApiError | Error | null>(null);
   const [busy, setBusy] = useState(false);
@@ -148,24 +152,28 @@ function ScheduleForm({
 
   return (
     <form className="schedule" onSubmit={submit}>
-      <label className="inline">
-        Stage
+      <label className="field">
+        Round type
         <select value={stage} onChange={(event) => setStage(event.target.value as Stage)}>
-          {STAGES.map((option) => (
+          {ROUND_STAGES.map((option) => (
             <option key={option} value={option}>
-              {option}
+              {stageLabel(option)}
             </option>
           ))}
         </select>
       </label>
-      <label className="inline">
-        When
+      <label className="field">
+        Date and time
         <input type="datetime-local" value={at} onChange={(event) => setAt(event.target.value)} required />
       </label>
       <button type="submit" disabled={busy}>
-        {busy ? 'Scheduling…' : 'Schedule round'}
+        <Icon name="calendar" /> {busy ? 'Scheduling…' : 'Schedule'}
       </button>
-      {error !== null && <ErrorNotice error={error} />}
+      {error !== null && (
+        <div style={{ flexBasis: '100%' }}>
+          <ErrorNotice error={error} />
+        </div>
+      )}
     </form>
   );
 }
@@ -186,32 +194,37 @@ export function RoundsPanel({
     rounds.reload();
   }
 
+  const list = rounds.data ?? [];
+
   return (
     <section className="card">
       <header className="card-head">
-        <h2>Rounds</h2>
-        <p className="muted">
-          A round&rsquo;s stage is not checked against the application&rsquo;s — booking an
-          interview loop while a candidate is still in SCREEN is ordinary recruiting.
-          Assigning an interviewer is what gives them sight of this candidate at all.
-        </p>
+        <div>
+          <h2>Interview rounds</h2>
+          <p>Interviewers only see this candidate once they are on a round&rsquo;s panel.</p>
+        </div>
       </header>
 
       {rounds.loading ? (
         <Loading label="Loading rounds…" />
       ) : rounds.error !== null ? (
         <ErrorNotice error={rounds.error} onRetry={rounds.reload} />
-      ) : (rounds.data ?? []).length === 0 ? (
-        <p className="muted pad">No rounds scheduled yet.</p>
+      ) : list.length === 0 ? (
+        <EmptyState title="No rounds scheduled" hint="Schedule the first one below." />
       ) : (
         <ul className="rounds">
-          {(rounds.data ?? []).map((round) => (
+          {list.map((round) => (
             <li key={round.id} className="round">
               <div className="round-head">
-                <span className="pill">{round.stage}</span>
-                <strong>{stamp(round.scheduledAt)}</strong>
+                <DateTile iso={round.scheduledAt} />
+                <span className="round-when">
+                  <strong>{formatDateTime(round.scheduledAt)}</strong>
+                  <span className="muted small">{relative(round.scheduledAt)}</span>
+                </span>
+                <StageBadge stage={round.stage} />
+                <span className="spacer" />
                 {round.feedbackCount === 0 ? (
-                  <span className="muted">No feedback yet</span>
+                  <span className="muted small">No feedback yet</span>
                 ) : (
                   <span className="marks">
                     {[...round.ratings]
@@ -221,17 +234,22 @@ export function RoundsPanel({
                       ))}
                   </span>
                 )}
-                <Link className="go" to={`/rounds/${round.id}`}>
-                  Open
+                <Link className="button sm secondary" to={`/rounds/${round.id}`}>
+                  View <Icon name="chevron" />
                 </Link>
               </div>
 
-              <div className="panel-list">
+              <div className="chips">
                 {(round.assignments ?? []).length === 0 ? (
-                  <span className="muted">Nobody assigned — this round is invisible to every interviewer.</span>
+                  <span className="badge warn plain">No interviewers yet</span>
                 ) : (
                   (round.assignments ?? []).map((entry) => (
-                    <span key={entry.interviewer.id} className="pill" title={`assigned by ${entry.assignedBy.name}`}>
+                    <span
+                      key={entry.interviewer.id}
+                      className="person-chip"
+                      title={`Added by ${entry.assignedBy.name}`}
+                    >
+                      <Avatar name={entry.interviewer.name} size="sm" />
                       {entry.interviewer.name}
                     </span>
                   ))
@@ -250,7 +268,8 @@ export function RoundsPanel({
         </ul>
       )}
 
-      <div className="pad bordered">
+      <div className="card-foot">
+        <h3 style={{ marginBottom: 10 }}>Schedule a round</h3>
         <ScheduleForm
           candidateId={candidateId}
           roleId={roleId}

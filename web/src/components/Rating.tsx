@@ -38,5 +38,5 @@ export function RatingMark({ value }: { value: number }) {
 
 /** Full: the word, for a feedback entry with room to spell it out. */
 export function RatingPill({ value }: { value: number }) {
-  return <span className={`pill rating r${value}`}>{ratingLabel(value)}</span>;
+  return <span className={`badge rating r${value}`}>{ratingLabel(value)}</span>;
 }

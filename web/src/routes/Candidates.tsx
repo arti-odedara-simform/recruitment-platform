@@ -5,7 +5,8 @@ import { useApi } from '../api/useApi.js';
 import { useSession } from '../auth/session.js';
 import { AddToReqForm } from '../components/AddToReqForm.js';
 import { ErrorNotice, Loading } from '../components/Feedback.js';
-import { STAGES, TERMINAL, type Stage } from '../domain/stages.js';
+import { EmptyState, Icon, PageHeader, Person, Segmented, StageBadge, days } from '../components/ui.js';
+import { STAGES, TERMINAL, stageLabel, type Stage } from '../domain/stages.js';
 
 /**
  * The work queue: who is on which req, and where they are.
@@ -20,13 +21,17 @@ import { STAGES, TERMINAL, type Stage } from '../domain/stages.js';
 
 type StatusFilter = 'OPEN' | 'CLOSED' | 'ALL';
 
-const STATUSES: StatusFilter[] = ['OPEN', 'CLOSED', 'ALL'];
+const STATUSES = [
+  { value: 'OPEN', label: 'Open reqs' },
+  { value: 'CLOSED', label: 'Closed reqs' },
+  { value: 'ALL', label: 'All' },
+] as const satisfies ReadonlyArray<{ value: StatusFilter; label: string }>;
 
 /** Same thresholds the pipeline view colours by, and the same reason terminal is exempt. */
-function ageClass(days: number, stage: Stage): string {
+function ageTone(days: number, stage: Stage): string {
   if (TERMINAL.includes(stage)) return '';
-  if (days >= 21) return 'age-bad';
-  if (days >= 10) return 'age-warn';
+  if (days >= 21) return 'bad';
+  if (days >= 10) return 'warn';
   return '';
 }
 
@@ -35,6 +40,7 @@ export function Candidates() {
   const [roleId, setRoleId] = useState('');
   const [stage, setStage] = useState<Stage | ''>('');
   const [roleStatus, setRoleStatus] = useState<StatusFilter>('OPEN');
+  const [adding, setAdding] = useState(false);
 
   const reqs = useApi(() => roles('ALL'), []);
   const rows = useApi(
@@ -47,105 +53,136 @@ export function Candidates() {
     [roleId, stage, roleStatus],
   );
 
-  return (
-    <section className="card">
-      <header className="card-head row">
-        <div>
-          <h2>Candidates</h2>
-          <p className="muted">
-            One row per application — the pipeline unit is a candidate <em>on a req</em>,
-            so someone on two reqs appears twice, at two stages. Longest-waiting first.
-          </p>
-        </div>
-        <div className="tabs">
-          {STATUSES.map((filter) => (
-            <button
-              key={filter}
-              type="button"
-              className={filter === roleStatus ? 'tab active' : 'tab'}
-              onClick={() => setRoleStatus(filter)}
-              title={filter === 'OPEN' ? 'Open reqs only — a closed req is history' : undefined}
-            >
-              {filter}
-            </button>
-          ))}
-        </div>
-      </header>
+  const isRecruiter = user?.role === 'RECRUITER';
+  const list = rows.data ?? [];
+  const filtered = roleId !== '' || stage !== '';
 
-      <div className="filters pad">
-        <label className="inline">
-          Req
-          <select value={roleId} onChange={(event) => setRoleId(event.target.value)}>
-            <option value="">Every req</option>
+  return (
+    <div className="stack">
+      <PageHeader
+        title="Candidates"
+        subtitle="Everyone in the pipeline, longest-waiting first. Someone on two requisitions appears once for each."
+        actions={
+          /*
+            Recruiters only, the same courtesy the navigation extends: `POST /applications`
+            is theirs, and a hiring manager pressing this could only collect a 403.
+          */
+          isRecruiter && !adding ? (
+            <button type="button" onClick={() => setAdding(true)}>
+              <Icon name="plus" /> Add to req
+            </button>
+          ) : undefined
+        }
+      />
+
+      {adding && <AddToReqForm onAdded={rows.reload} onClose={() => setAdding(false)} />}
+
+      <section className="card">
+        <div className="toolbar">
+          <select
+            aria-label="Requisition"
+            value={roleId}
+            onChange={(event) => setRoleId(event.target.value)}
+          >
+            <option value="">All requisitions</option>
             {(reqs.data ?? []).map((req) => (
               <option key={req.id} value={req.id}>
                 {req.title}
               </option>
             ))}
           </select>
-        </label>
-        <label className="inline">
-          Stage
-          <select value={stage} onChange={(event) => setStage(event.target.value as Stage | '')}>
-            <option value="">Every stage</option>
+          <select
+            aria-label="Stage"
+            value={stage}
+            onChange={(event) => setStage(event.target.value as Stage | '')}
+          >
+            <option value="">All stages</option>
             {STAGES.map((option) => (
               <option key={option} value={option}>
-                {option}
+                {stageLabel(option)}
               </option>
             ))}
           </select>
-        </label>
-      </div>
+          {filtered && (
+            <button
+              type="button"
+              className="ghost sm"
+              onClick={() => {
+                setRoleId('');
+                setStage('');
+              }}
+            >
+              Clear filters
+            </button>
+          )}
+          <span style={{ marginLeft: 'auto' }}>
+            <Segmented label="Requisition status" value={roleStatus} options={STATUSES} onChange={setRoleStatus} />
+          </span>
+        </div>
 
-      {/*
-        Recruiters only, the same courtesy the navigation extends: `POST /applications`
-        is theirs, and a hiring manager pressing this could only collect a 403.
-      */}
-      {user?.role === 'RECRUITER' && <AddToReqForm onAdded={rows.reload} />}
-
-      {rows.loading ? (
-        <Loading label="Loading candidates…" />
-      ) : rows.error !== null ? (
-        <ErrorNotice error={rows.error} onRetry={rows.reload} />
-      ) : (rows.data ?? []).length === 0 ? (
-        <p className="muted pad">Nobody matches that filter.</p>
-      ) : (
-        <table className="grid list">
-          <thead>
-            <tr>
-              <th>Candidate</th>
-              <th>Req</th>
-              <th>Stage</th>
-              <th>Waiting</th>
-              <th>Rounds</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {(rows.data ?? []).map((row) => (
-              <tr key={row.applicationId}>
-                <td>{row.candidate.name}</td>
-                <td className="muted">
-                  {row.roleTitle}
-                  {row.roleStatus === 'CLOSED' && <span className="pill closed"> CLOSED</span>}
-                </td>
-                <td>
-                  <span className="pill">{row.currentStage}</span>
-                </td>
-                <td className={ageClass(row.daysInStage, row.currentStage as Stage)}>
-                  {row.daysInStage}d
-                </td>
-                <td className="muted">{row.roundCount === 0 ? '—' : row.roundCount}</td>
-                <td>
-                  <Link className="go" to={`/applications/${row.candidate.id}/${row.roleId}`}>
-                    Open
-                  </Link>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </section>
+        {rows.loading ? (
+          <Loading label="Loading candidates…" />
+        ) : rows.error !== null ? (
+          <ErrorNotice error={rows.error} onRetry={rows.reload} />
+        ) : list.length === 0 ? (
+          <EmptyState
+            title={filtered ? 'Nobody matches these filters' : 'No candidates yet'}
+            hint={filtered ? 'Try a different requisition or stage.' : undefined}
+          />
+        ) : (
+          <div className="scroll">
+            <table className="grid list">
+              <thead>
+                <tr>
+                  <th>Candidate</th>
+                  <th>Requisition</th>
+                  <th>Stage</th>
+                  <th>In stage</th>
+                  <th className="right">Rounds</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {list.map((row) => {
+                  const href = `/applications/${row.candidate.id}/${row.roleId}`;
+                  const tone = ageTone(row.daysInStage, row.currentStage as Stage);
+                  return (
+                    <tr key={row.applicationId}>
+                      <td>
+                        <Person name={row.candidate.name}>
+                          <Link className="row-link" to={href}>
+                            {row.candidate.name}
+                          </Link>
+                        </Person>
+                      </td>
+                      <td>
+                        <span className="actions">
+                          <span className="muted">{row.roleTitle}</span>
+                          {row.roleStatus === 'CLOSED' && <span className="badge closed plain">Closed</span>}
+                        </span>
+                      </td>
+                      <td>
+                        <StageBadge stage={row.currentStage} />
+                      </td>
+                      <td>
+                        <span className={`badge plain ${tone}`}>
+                          {days(row.daysInStage)}
+                        </span>
+                      </td>
+                      <td className="right num muted">{row.roundCount === 0 ? '—' : row.roundCount}</td>
+                      <td className="right">
+                        <Link className="row-link muted" to={href} aria-label={`Open ${row.candidate.name}`}>
+                          <Icon name="chevron" />
+                        </Link>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
   );
 }
