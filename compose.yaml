@@ -1,0 +1,72 @@
+# PLAN.md §10 — the whole delivery surface: `docker compose up` and nothing else.
+name: recruitment-pipeline-poc
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: recruitment_app
+      POSTGRES_PASSWORD: recruitment_dev_pw
+      POSTGRES_DB: recruitment_poc
+    ports:
+      - '5433:5432' # 5433 on the host, so a Postgres already installed there still works
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      # The api waits on this, so it never races the first migration against a
+      # database that is still initialising.
+      test: ['CMD-SHELL', 'pg_isready -U recruitment_app -d recruitment_poc']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      # Inside the compose network the host is the service name and the port is 5432.
+      DATABASE_URL: postgresql://recruitment_app:recruitment_dev_pw@db:5432/recruitment_poc?schema=public
+      JWT_SECRET: ${JWT_SECRET:-dev_only_secret_change_me_at_least_32_chars_long}
+      SEED: ${SEED:-true}
+      LOG_QUERIES: ${LOG_QUERIES:-false}
+      # The entrypoint installs layer 3 before this process starts, and the app user owns
+      # this cluster, so it is always available here — demand it rather than degrade.
+      DB_RLS: ${DB_RLS:-require}
+      # NODE_ENV is production here, where docs default to off. The whole point of this
+      # stack is that a reviewer can browse the API, so it is turned on deliberately.
+      ENABLE_DOCS: ${ENABLE_DOCS:-true}
+    ports:
+      - '4000:4000'
+    healthcheck:
+      test:
+        ['CMD-SHELL', 'node -e "fetch(''http://localhost:4000/health'').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  web:
+    # PLAN.md §13 puts the UI out of scope and the API is the deliverable, but the brief
+    # asks for the whole thing to come up with `docker compose up` and no manual setup —
+    # so the frontend is a service here rather than a second terminal in the README.
+    build: ./web
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      # 5173 is the port the Vite dev server uses, so the URL is the same either way.
+      - '5173:80'
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O /dev/null http://localhost/ || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  db-data:

@@ -1,0 +1,196 @@
+// Recruitment Pipeline POC — see PLAN.md §2 for the domain model this implements.
+//
+// Table names are the model names verbatim (no @@map): the raw SQL in PLAN.md §6
+// and the CHECK constraints in the init migration refer to "Application",
+// "StageTransition" and "Feedback" as quoted identifiers.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  INTERVIEWER
+  RECRUITER
+  HIRING_MANAGER
+}
+
+enum Stage {
+  APPLIED
+  SCREEN
+  INTERVIEW
+  OFFER
+  HIRED
+  REJECTED
+}
+
+enum TransitionKind {
+  NORMAL
+  OVERRIDE
+}
+
+enum RoleStatus {
+  OPEN
+  CLOSED
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String
+  role         UserRole
+  passwordHash String
+  createdAt    DateTime @default(now())
+
+  rolesManaged     Role[]            @relation("HiringManagerRoles")
+  assignments      RoundAssignment[] @relation("AssignedInterviewer")
+  assignmentsMade  RoundAssignment[] @relation("AssignedBy")
+  feedback         Feedback[]
+  stageTransitions StageTransition[]
+  auditEvents      AuditEvent[]
+
+  @@index([role])
+}
+
+/// The open job req. Named "Role" per PLAN.md §2; unrelated to UserRole (authorization).
+model Role {
+  id              String     @id @default(uuid())
+  title           String
+  hiringManagerId String
+  status          RoleStatus @default(OPEN)
+  openedAt        DateTime   @default(now())
+
+  hiringManager    User              @relation("HiringManagerRoles", fields: [hiringManagerId], references: [id])
+  applications     Application[]
+  stageTransitions StageTransition[]
+
+  @@index([status])
+  @@index([hiringManagerId])
+}
+
+model Candidate {
+  id        String   @id @default(uuid())
+  name      String
+  /// RESTRICTED — recruiter-only. Never named in CANDIDATE_SELECT.interviewer (PLAN.md §1).
+  email     String
+  /// RESTRICTED — recruiter-only. Never named in CANDIDATE_SELECT.interviewer (PLAN.md §1).
+  phone     String?
+  createdAt DateTime @default(now())
+
+  applications     Application[]
+  stageTransitions StageTransition[]
+}
+
+/// Candidate <-> Role: the pipeline unit.
+///
+/// PLAN.md §2 sketched a composite PK on (candidateId, roleId); §14 flagged the fallback.
+/// Taken on D2: surrogate `id` + @@unique([candidateId, roleId]), because InterviewRound
+/// needs a single-column FK to an Application. The §4 two-segment routes are unaffected —
+/// they resolve through the unique pair.
+model Application {
+  id                    String   @id @default(uuid())
+  candidateId           String
+  roleId                String
+  currentStage          Stage    @default(APPLIED)
+  /// Denormalised for the ageing aggregate (PLAN.md §6). Written in the same
+  /// transaction as every stage change.
+  currentStageEnteredAt DateTime @default(now())
+  createdAt             DateTime @default(now())
+
+  candidate Candidate        @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  role      Role             @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  rounds    InterviewRound[]
+
+  @@unique([candidateId, roleId])
+  @@index([roleId, currentStage, currentStageEnteredAt])
+  @@index([currentStage, currentStageEnteredAt])
+}
+
+model InterviewRound {
+  id            String   @id @default(uuid())
+  applicationId String
+  /// The stage this round belongs to.
+  stage         Stage
+  scheduledAt   DateTime
+  createdAt     DateTime @default(now())
+
+  application Application       @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  assignments RoundAssignment[]
+  feedback    Feedback[]
+
+  @@index([applicationId])
+  @@index([scheduledAt])
+}
+
+/// Who may see/act on a round. Drives every interviewer-scoping query (PLAN.md §1 layer 2).
+model RoundAssignment {
+  roundId       String
+  interviewerId String
+  assignedById  String
+  assignedAt    DateTime @default(now())
+
+  round       InterviewRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  interviewer User           @relation("AssignedInterviewer", fields: [interviewerId], references: [id])
+  assignedBy  User           @relation("AssignedBy", fields: [assignedById], references: [id])
+
+  @@id([roundId, interviewerId])
+  @@index([interviewerId])
+}
+
+model Feedback {
+  id            String   @id @default(uuid())
+  roundId       String
+  interviewerId String
+  /// 1..4 — CHECK constraint `rating_range` in the init migration.
+  rating        Int
+  notes         String
+  submittedAt   DateTime @default(now())
+
+  round       InterviewRound @relation(fields: [roundId], references: [id])
+  interviewer User           @relation(fields: [interviewerId], references: [id])
+
+  /// The concurrency rule (PLAN.md §5): one row per interviewer per round.
+  /// A 23505 here maps to 409 — never a silent update.
+  @@unique([roundId, interviewerId])
+  @@index([roundId])
+}
+
+/// Append-only: the audit trace for stage movement.
+model StageTransition {
+  id          String         @id @default(uuid())
+  candidateId String
+  roleId      String
+  fromStage   Stage
+  toStage     Stage
+  kind        TransitionKind
+  actorId     String
+  /// Required for OVERRIDE — CHECK constraint `override_requires_reason`.
+  reason      String?
+  occurredAt  DateTime       @default(now())
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  role      Role      @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  actor     User      @relation(fields: [actorId], references: [id])
+
+  @@index([candidateId, roleId, occurredAt])
+}
+
+/// Append-only: everything else. Written inside the mutating transaction (PLAN.md §8).
+model AuditEvent {
+  id         String   @id @default(uuid())
+  actorId    String
+  /// ROUND_CREATED | ASSIGNMENT_CREATED | FEEDBACK_SUBMITTED | STAGE_ADVANCED | STAGE_OVERRIDDEN
+  action     String
+  entity     String
+  entityId   String
+  payload    Json
+  occurredAt DateTime @default(now())
+
+  actor User @relation(fields: [actorId], references: [id])
+
+  @@index([entity, entityId, occurredAt])
+  @@index([actorId, occurredAt])
+}
