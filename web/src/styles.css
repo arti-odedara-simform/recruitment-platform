@@ -762,6 +762,15 @@ p.error, span.error { color: var(--bad); font-size: 0.8rem; font-weight: 500; }
 .round-when strong { font-weight: 600; }
 .round-head .spacer { margin-left: auto; }
 
+.earlier-rounds { border-top: 1px solid var(--line); }
+.earlier-rounds > summary {
+  padding: 12px 20px;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.earlier-rounds .round { opacity: 0.75; }
+
 .assign, .schedule { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
 .schedule .field { flex: 1 1 180px; }
 
