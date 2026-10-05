@@ -289,6 +289,53 @@ describe('GET /candidates — pagination and search', () => {
     }
   });
 
+  it('sorts by name descending', async () => {
+    const response = await list('?order=desc', RECRUITER);
+
+    expect(response.status).toBe(200);
+    const names = (response.body.items as Array<{ name: string }>).map((c) => c.name);
+    expect(names).toEqual([...names].sort((a, b) => b.localeCompare(a)));
+  });
+
+  it('sorts a recruiter page by email and by date added', async () => {
+    const byEmail = await list('?sort=email&pageSize=100', RECRUITER);
+    const emails = (byEmail.body.items as Array<{ email: string }>).map((c) => c.email);
+    expect(emails).toEqual([...emails].sort());
+
+    const byAdded = await list('?sort=createdAt&order=desc&pageSize=100', RECRUITER);
+    const added = (byAdded.body.items as Array<{ createdAt: string }>).map((c) => c.createdAt);
+    expect(added).toEqual([...added].sort().reverse());
+  });
+
+  it('puts a missing phone last in either direction', async () => {
+    for (const order of ['asc', 'desc']) {
+      const response = await list(`?sort=phone&order=${order}&pageSize=100`, RECRUITER);
+      const phones = (response.body.items as Array<{ phone: string | null }>).map((c) => c.phone);
+      const firstNull = phones.indexOf(null);
+      if (firstNull !== -1) expect(phones.slice(firstNull).every((p) => p === null)).toBe(true);
+    }
+  });
+
+  it('400s an unknown sort column or direction', async () => {
+    expect((await list('?sort=password', RECRUITER)).status).toBe(400);
+    expect((await list('?order=sideways', RECRUITER)).status).toBe(400);
+  });
+
+  /** Row order by a hidden column is the same oracle as searching it. */
+  it('lets an interviewer sort by name only, without naming contact columns', async () => {
+    expect((await list('?order=desc', ASSIGNED_INTERVIEWER)).status).toBe(200);
+
+    for (const sort of ['email', 'phone', 'createdAt']) {
+      emitted.length = 0;
+      const response = await list(`?sort=${sort}`, ASSIGNED_INTERVIEWER);
+      expect(response.status).toBe(400);
+      expect(response.body.errors[0].path).toBe('query.sort');
+      for (const statement of emitted) {
+        expect(statement, `restricted column named in: ${statement}`).not.toMatch(/email|phone/i);
+      }
+    }
+  });
+
   it('401s without a token and 403s a hiring manager', async () => {
     expect((await list('')).status).toBe(401);
     expect((await list('', HIRING_MANAGER)).status).toBe(403);

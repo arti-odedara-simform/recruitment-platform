@@ -216,7 +216,7 @@ export interface paths {
          *     - **Recruiter** — every candidate, full record. `q` matches name, email or phone.
          *     - **Interviewer** — only candidates they are assigned to interview, name and id only. `q` matches **name only**: searching contact fields would let an interviewer recover an address one character at a time from which rows come back.
          *
-         *     Ordered by name, then id, so pages are stable. A page past the end is an empty `items`, not an error.
+         *     Ordered by `sort` (default `name`) in `order` (default `asc`), then by id, so pages are stable. A missing phone sorts last either way. A page past the end is an empty `items`, not an error.
          */
         get: operations["getCandidates"];
         put?: never;
@@ -656,7 +656,7 @@ export interface components {
             id: string;
             name: string;
         };
-        /** @description One page of candidates, by name. */
+        /** @description One page of candidates, in the requested order. */
         CandidatePage: {
             items: (components["schemas"]["CandidateRecruiterView"] | components["schemas"]["CandidateInterviewerView"])[];
             page: number;
@@ -1326,6 +1326,8 @@ export interface operations {
                 q?: string;
                 page?: number;
                 pageSize?: number;
+                sort?: "name" | "email" | "phone" | "createdAt";
+                order?: "asc" | "desc";
             };
             header?: never;
             path?: never;

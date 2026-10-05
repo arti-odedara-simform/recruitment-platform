@@ -1,5 +1,5 @@
 import { UserRole } from '@prisma/client';
-import { ForbiddenError, NotFoundError } from '../errors/AppError.js';
+import { BadRequestError, ForbiddenError, NotFoundError } from '../errors/AppError.js';
 import type { Actor } from '../domain/actor.js';
 import {
   findCandidateForInterviewer,
@@ -65,6 +65,18 @@ function readFor(actor: Actor, candidateId: string): Promise<CandidateView | nul
  * interviewer's page is assigned candidates only, in the narrow field set.
  */
 export async function listCandidates(actor: Actor, filter: CandidateListFilter): Promise<CandidateList> {
+  /**
+   * Ordering by a column the caller cannot see is the same oracle as searching it: the
+   * position of a row in an `email`-sorted page says something about the address. So an
+   * interviewer may sort by name only, and anything else is refused before the query —
+   * which also keeps `email` and `phone` out of the interviewer path's SQL.
+   */
+  if (actor.role === UserRole.INTERVIEWER && filter.sort !== 'name') {
+    throw new BadRequestError('Interviewers can sort by name only.', [
+      { path: 'query.sort', message: 'Interviewers can sort by name only.' },
+    ]);
+  }
+
   const { items, total } = await listFor(actor, filter);
 
   return {

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { candidates, type Schemas } from '../api/client.js';
+import { candidates, type CandidateSort, type Schemas, type SortOrder } from '../api/client.js';
 import { useApi } from '../api/useApi.js';
 import { ErrorNotice, Loading } from '../components/Feedback.js';
 import { EmptyState, Icon, PageHeader, Person, formatDate } from '../components/ui.js';
@@ -10,8 +10,11 @@ import { EmptyState, Icon, PageHeader, Person, formatDate } from '../components/
  * backed by `GET /candidates`. The Candidates screen lists *applications*; someone who
  * has never been put on a req shows up only here.
  *
- * Search, page and page size live in the URL rather than component state, so a refresh
- * or a shared link lands on the same page of the same search.
+ * Search, sort, page and page size live in the URL rather than component state, so a
+ * refresh or a shared link lands on the same page of the same search.
+ *
+ * Sorting happens in the API, not on the rows in hand — sorting one page locally would
+ * reorder twenty rows out of thousands and call it sorted.
  */
 
 const PAGE_SIZES = [10, 20, 50, 100] as const;
@@ -21,6 +24,10 @@ const DEFAULT_PAGE_SIZE = 20;
 const SEARCH_DEBOUNCE_MS = 300;
 
 type Row = Schemas['CandidatePage']['items'][number];
+
+const SORTS: readonly CandidateSort[] = ['name', 'email', 'phone', 'createdAt'];
+const DEFAULT_SORT: CandidateSort = 'name';
+const DEFAULT_ORDER: SortOrder = 'asc';
 
 function positiveInt(raw: string | null, fallback: number): number {
   const value = Number(raw);
@@ -42,6 +49,9 @@ export function Directory() {
   const pageSize = (PAGE_SIZES as readonly number[]).includes(pageSizeParam)
     ? pageSizeParam
     : DEFAULT_PAGE_SIZE;
+  const sortParam = params.get('sort');
+  const sort = SORTS.find((value) => value === sortParam) ?? DEFAULT_SORT;
+  const order: SortOrder = params.get('order') === 'desc' ? 'desc' : DEFAULT_ORDER;
 
   /**
    * The input's own text, ahead of the URL by up to one debounce. Keeping them separate
@@ -62,7 +72,13 @@ export function Directory() {
   }
 
   /** Writes to the URL, dropping values that equal the default so links stay short. */
-  function update(next: { q?: string; page?: number; pageSize?: number }) {
+  function update(next: {
+    q?: string;
+    page?: number;
+    pageSize?: number;
+    sort?: CandidateSort;
+    order?: SortOrder;
+  }) {
     setParams(
       (current) => {
         const merged = new URLSearchParams(current);
@@ -70,6 +86,8 @@ export function Directory() {
           ['q', next.q, ''],
           ['page', next.page, 1],
           ['pageSize', next.pageSize, DEFAULT_PAGE_SIZE],
+          ['sort', next.sort, DEFAULT_SORT],
+          ['order', next.order, DEFAULT_ORDER],
         ];
         for (const [key, value, fallback] of entries) {
           if (value === undefined) continue;
@@ -91,10 +109,39 @@ export function Directory() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft, q]);
 
-  const result = useApi(() => candidates({ q, page, pageSize }), [q, page, pageSize]);
+  const result = useApi(
+    () => candidates({ q, page, pageSize, sort, order }),
+    [q, page, pageSize, sort, order],
+  );
   const data = result.data;
   const items = data?.items ?? [];
   const showContact = items.some(hasContact);
+
+  /** Same column flips the direction; a new column starts ascending. Either way, back to page 1. */
+  function sortBy(column: CandidateSort) {
+    const nextOrder: SortOrder = column === sort && order === 'asc' ? 'desc' : 'asc';
+    update({ sort: column, order: nextOrder, page: 1 });
+  }
+
+  /**
+   * A header that sorts. Only rendered for columns the API can order this caller by:
+   * interviewers never see the contact columns, and `name` is the one sort open to them.
+   */
+  function sortHeader(column: CandidateSort, label: string) {
+    const active = column === sort;
+    return (
+      <th key={column} aria-sort={active ? (order === 'asc' ? 'ascending' : 'descending') : 'none'}>
+        <button
+          type="button"
+          className={active ? 'th-sort active' : 'th-sort'}
+          onClick={() => sortBy(column)}
+        >
+          {label}
+          <Icon name={active ? (order === 'asc' ? 'sortAsc' : 'sortDesc') : 'sortable'} />
+        </button>
+      </th>
+    );
+  }
 
   const first = data && data.total > 0 ? (data.page - 1) * data.pageSize + 1 : 0;
   const last = data ? first + items.length - Math.min(1, items.length) : 0;
@@ -144,12 +191,12 @@ export function Directory() {
             <table className={result.loading ? 'grid list stale' : 'grid list'} aria-busy={result.loading}>
               <thead>
                 <tr>
-                  <th>Name</th>
+                  {sortHeader('name', 'Name')}
                   {showContact && (
                     <>
-                      <th>Email</th>
-                      <th>Phone</th>
-                      <th>Added</th>
+                      {sortHeader('email', 'Email')}
+                      {sortHeader('phone', 'Phone')}
+                      {sortHeader('createdAt', 'Added')}
                     </>
                   )}
                 </tr>

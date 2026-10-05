@@ -1,4 +1,4 @@
-import type { components } from './types.js';
+import type { components, operations } from './types.js';
 
 /**
  * The only place in the app that talks to the network.
@@ -190,10 +190,17 @@ export function candidate(
   return apiFetch(`/candidates/${encodeURIComponent(id)}`);
 }
 
+type CandidateQuery = NonNullable<operations['getCandidates']['parameters']['query']>;
+export type CandidateSort = NonNullable<CandidateQuery['sort']>;
+export type SortOrder = NonNullable<CandidateQuery['order']>;
+
 export interface CandidateSearch {
   q?: string;
   page?: number;
   pageSize?: number;
+  /** Interviewers may sort by `name` only; the API 400s anything else for them. */
+  sort?: CandidateSort;
+  order?: SortOrder;
 }
 
 /**

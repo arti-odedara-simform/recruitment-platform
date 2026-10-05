@@ -326,6 +326,26 @@ table.grid thead th {
   padding-bottom: 10px;
 }
 
+/* A sortable header: the button inherits the th's type so it reads as a label, not a control. */
+.th-sort {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  border-radius: 4px;
+}
+.th-sort svg { width: 12px; height: 12px; opacity: 0.4; }
+.th-sort:hover { color: var(--ink); }
+.th-sort:hover svg,
+.th-sort.active svg { opacity: 1; }
+.th-sort.active { color: var(--ink); }
+.th-sort:focus-visible { box-shadow: var(--focus); }
+
 table.grid tbody tr { transition: background 100ms; }
 table.grid.list tbody tr:hover { background: var(--panel-2); }
 
@@ -761,6 +781,15 @@ p.error, span.error { color: var(--bad); font-size: 0.8rem; font-weight: 500; }
 .round-when { display: grid; line-height: 1.3; }
 .round-when strong { font-weight: 600; }
 .round-head .spacer { margin-left: auto; }
+
+.earlier-rounds { border-top: 1px solid var(--line); }
+.earlier-rounds > summary {
+  padding: 12px 20px;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.earlier-rounds .round { opacity: 0.75; }
 
 .assign, .schedule { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
 .schedule .field { flex: 1 1 180px; }

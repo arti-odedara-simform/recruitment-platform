@@ -8,11 +8,11 @@ import {
   users,
 } from '../api/client.js';
 import type { Schemas } from '../api/client.js';
-import { useApi } from '../api/useApi.js';
+import { useApi, type AsyncState } from '../api/useApi.js';
 import { ErrorNotice, Loading } from './Feedback.js';
 import { RatingMark } from './Rating.js';
 import { Avatar, DateTile, EmptyState, Icon, StageBadge, formatDateTime, relative } from './ui.js';
-import { stageLabel, type Stage } from '../domain/stages.js';
+import { STAGES, stageLabel, type Stage } from '../domain/stages.js';
 
 /**
  * The stages an interview is held for. The API accepts any stage and does not check it
@@ -178,6 +178,81 @@ function ScheduleForm({
   );
 }
 
+/**
+ * A round is "earlier" once the application has moved past its stage — an Interview round
+ * after the move to Offer, or any round once the application is Hired or Rejected. Those
+ * stay on record (their feedback is the reason for the move) but are no longer the
+ * schedule, so they are listed apart and without the panel picker.
+ */
+function isEarlier(roundStage: string, currentStage: Stage): boolean {
+  if (currentStage === 'HIRED' || currentStage === 'REJECTED') return true;
+  return STAGES.indexOf(roundStage as Stage) < STAGES.indexOf(currentStage);
+}
+
+function RoundItem({
+  round,
+  interviewers,
+  onAssigned,
+}: {
+  round: Schemas['Round'];
+  /** `null` renders the round read-only: no one is added to a stage the candidate has left. */
+  interviewers: AsyncState<Schemas['PublicUser'][]> | null;
+  onAssigned: () => void;
+}) {
+  return (
+    <li className="round">
+      <div className="round-head">
+        <DateTile iso={round.scheduledAt} />
+        <span className="round-when">
+          <strong>{formatDateTime(round.scheduledAt)}</strong>
+          <span className="muted small">{relative(round.scheduledAt)}</span>
+        </span>
+        <StageBadge stage={round.stage} />
+        <span className="spacer" />
+        {round.feedbackCount === 0 ? (
+          <span className="muted small">No feedback yet</span>
+        ) : (
+          <span className="marks">
+            {[...round.ratings]
+              .sort((a, b) => a - b)
+              .map((rating, index) => (
+                <RatingMark key={index} value={rating} />
+              ))}
+          </span>
+        )}
+        <Link className="button sm secondary" to={`/rounds/${round.id}`}>
+          View <Icon name="chevron" />
+        </Link>
+      </div>
+
+      <div className="chips">
+        {(round.assignments ?? []).length === 0 ? (
+          <span className="badge warn plain">No interviewers yet</span>
+        ) : (
+          (round.assignments ?? []).map((entry) => (
+            <span
+              key={entry.interviewer.id}
+              className="person-chip"
+              title={`Added by ${entry.assignedBy.name}`}
+            >
+              <Avatar name={entry.interviewer.name} size="sm" />
+              {entry.interviewer.name}
+            </span>
+          ))
+        )}
+      </div>
+
+      {interviewers === null ? null : interviewers.error !== null ? (
+        <ErrorNotice error={interviewers.error} onRetry={interviewers.reload} />
+      ) : (
+        interviewers.data !== null && (
+          <AssignForm round={round} interviewers={interviewers.data} onAssigned={onAssigned} />
+        )
+      )}
+    </li>
+  );
+}
+
 export function RoundsPanel({
   candidateId,
   roleId,
@@ -194,7 +269,9 @@ export function RoundsPanel({
     rounds.reload();
   }
 
-  const list = rounds.data ?? [];
+  const all = rounds.data ?? [];
+  const list = all.filter((round) => !isEarlier(round.stage, currentStage));
+  const earlier = all.filter((round) => isEarlier(round.stage, currentStage));
 
   return (
     <section className="card">
@@ -210,67 +287,35 @@ export function RoundsPanel({
       ) : rounds.error !== null ? (
         <ErrorNotice error={rounds.error} onRetry={rounds.reload} />
       ) : list.length === 0 ? (
-        <EmptyState title="No rounds scheduled" hint="Schedule the first one below." />
+        <EmptyState
+          title={`No ${stageLabel(currentStage).toLowerCase()} rounds scheduled`}
+          hint="Schedule one below."
+        />
       ) : (
         <ul className="rounds">
           {list.map((round) => (
-            <li key={round.id} className="round">
-              <div className="round-head">
-                <DateTile iso={round.scheduledAt} />
-                <span className="round-when">
-                  <strong>{formatDateTime(round.scheduledAt)}</strong>
-                  <span className="muted small">{relative(round.scheduledAt)}</span>
-                </span>
-                <StageBadge stage={round.stage} />
-                <span className="spacer" />
-                {round.feedbackCount === 0 ? (
-                  <span className="muted small">No feedback yet</span>
-                ) : (
-                  <span className="marks">
-                    {[...round.ratings]
-                      .sort((a, b) => a - b)
-                      .map((rating, index) => (
-                        <RatingMark key={index} value={rating} />
-                      ))}
-                  </span>
-                )}
-                <Link className="button sm secondary" to={`/rounds/${round.id}`}>
-                  View <Icon name="chevron" />
-                </Link>
-              </div>
-
-              <div className="chips">
-                {(round.assignments ?? []).length === 0 ? (
-                  <span className="badge warn plain">No interviewers yet</span>
-                ) : (
-                  (round.assignments ?? []).map((entry) => (
-                    <span
-                      key={entry.interviewer.id}
-                      className="person-chip"
-                      title={`Added by ${entry.assignedBy.name}`}
-                    >
-                      <Avatar name={entry.interviewer.name} size="sm" />
-                      {entry.interviewer.name}
-                    </span>
-                  ))
-                )}
-              </div>
-
-              {interviewers.error !== null ? (
-                <ErrorNotice error={interviewers.error} onRetry={interviewers.reload} />
-              ) : (
-                interviewers.data !== null && (
-                  <AssignForm round={round} interviewers={interviewers.data} onAssigned={reload} />
-                )
-              )}
-            </li>
+            <RoundItem key={round.id} round={round} interviewers={interviewers} onAssigned={reload} />
           ))}
         </ul>
+      )}
+
+      {!rounds.loading && rounds.error === null && earlier.length > 0 && (
+        <details className="earlier-rounds">
+          <summary>
+            Earlier rounds <span className="muted">({earlier.length})</span>
+          </summary>
+          <ul className="rounds">
+            {earlier.map((round) => (
+              <RoundItem key={round.id} round={round} interviewers={null} onAssigned={reload} />
+            ))}
+          </ul>
+        </details>
       )}
 
       <div className="card-foot">
         <h3 style={{ marginBottom: 10 }}>Schedule a round</h3>
         <ScheduleForm
+          key={currentStage}
           candidateId={candidateId}
           roleId={roleId}
           currentStage={currentStage}

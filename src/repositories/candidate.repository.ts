@@ -114,12 +114,22 @@ export async function findCandidateForInterviewer(
   }));
 }
 
+/**
+ * Columns a list can be ordered by. Recruiters may use any of them; interviewers only
+ * `name` — the service refuses the rest before a query is built (see `listCandidates`).
+ */
+export const CANDIDATE_SORT_FIELDS = ['name', 'email', 'phone', 'createdAt'] as const;
+export type CandidateSortField = (typeof CANDIDATE_SORT_FIELDS)[number];
+export type SortOrder = 'asc' | 'desc';
+
 export interface CandidateListFilter {
   /** Free-text search, already trimmed. Omitted lists everyone in scope. */
   q?: string | undefined;
   /** 1-based. */
   page: number;
   pageSize: number;
+  sort: CandidateSortField;
+  order: SortOrder;
 }
 
 export interface CandidatePage<T> {
@@ -128,10 +138,17 @@ export interface CandidatePage<T> {
 }
 
 /**
- * The same ordering on both paths, with `id` as the tiebreak so two candidates sharing
- * a name cannot swap between pages.
+ * The requested column, then `id` as the tiebreak so two candidates sharing a value
+ * cannot swap between pages. A missing phone sorts last in either direction, so the
+ * rows with something to compare stay on the first pages.
  */
-const LIST_ORDER = [{ name: 'asc' }, { id: 'asc' }] satisfies Prisma.CandidateOrderByWithRelationInput[];
+function listOrder(filter: CandidateListFilter): Prisma.CandidateOrderByWithRelationInput[] {
+  const primary: Prisma.CandidateOrderByWithRelationInput =
+    filter.sort === 'phone'
+      ? { phone: { sort: filter.order, nulls: 'last' } }
+      : { [filter.sort]: filter.order };
+  return [primary, { id: filter.order }];
+}
 
 function pageArgs(filter: CandidateListFilter): { skip: number; take: number } {
   return { skip: (filter.page - 1) * filter.pageSize, take: filter.pageSize };
@@ -159,7 +176,7 @@ export async function listCandidatesForRecruiter(
     prisma.candidate.findMany({
       where,
       select: CANDIDATE_SELECT.recruiter,
-      orderBy: LIST_ORDER,
+      orderBy: listOrder(filter),
       ...pageArgs(filter),
     }),
     prisma.candidate.count({ where }),
@@ -198,7 +215,7 @@ export async function listCandidatesForInterviewer(
       db.candidate.findMany({
         where,
         select: CANDIDATE_SELECT.interviewer,
-        orderBy: LIST_ORDER,
+        orderBy: listOrder(filter),
         ...pageArgs(filter),
       }),
       db.candidate.count({ where }),
