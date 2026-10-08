@@ -285,9 +285,9 @@ it upserts, so re-running resets them to the documented values.
 |---|---|
 | `rachel.recruiter@example.com`, `raj.recruiter@example.com` | RECRUITER |
 | `ingrid.` / `ivan.` / `iris.` / `ian.interviewer@example.com` | INTERVIEWER |
-| `hana.manager@example.com` | HIRING_MANAGER |
+| `hana.manager@example.com`, `hamid.manager@example.com` | HIRING_MANAGER |
 
-Password for all seven: `poc-dev-password`.
+Password for all eight: `poc-dev-password`.
 
 These are committed on purpose, so a reviewer can curl the API a minute after
 `docker compose up`. Nothing here is a secret and nothing here should meet real data.

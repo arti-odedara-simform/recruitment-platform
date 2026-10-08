@@ -299,8 +299,9 @@ data.
 | `iris.interviewer@example.com` | INTERVIEWER |
 | `ian.interviewer@example.com` | INTERVIEWER |
 | `hana.manager@example.com` | HIRING_MANAGER |
+| `hamid.manager@example.com` | HIRING_MANAGER |
 
-Password for all seven: `poc-dev-password`.
+Password for all eight: `poc-dev-password`.
 
 ### A first call
 

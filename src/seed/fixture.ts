@@ -71,6 +71,7 @@ export const USERS = [
   { key: 'iris', email: 'iris.interviewer@example.com', name: 'Iris Chen', role: UserRole.INTERVIEWER },
   { key: 'ian', email: 'ian.interviewer@example.com', name: 'Ian Murphy', role: UserRole.INTERVIEWER },
   { key: 'hana', email: 'hana.manager@example.com', name: 'Hana Suzuki', role: UserRole.HIRING_MANAGER },
+  { key: 'hamid', email: 'hamid.manager@example.com', name: 'Hamid Karimi', role: UserRole.HIRING_MANAGER },
 ] as const satisfies readonly FixtureUser[];
 
 export type UserKey = (typeof USERS)[number]['key'];
@@ -91,10 +92,15 @@ export interface FixtureRole {
  * Three roles, per PLAN.md §10. One is CLOSED — the §6 pipeline aggregate filters on
  * `status = 'OPEN'`, and a fixture where every role is open would let a missing WHERE
  * clause pass unnoticed.
+ *
+ * Split across two hiring managers so the §4 ownership scope is visible in the demo, not
+ * just in tests: Hana owns backend and design, Hamid owns platform. c01 has applied to
+ * both backend and platform, so each manager sees that candidate through a different
+ * application — and neither sees the other's.
  */
 export const ROLES = [
   { key: 'backend', title: 'Senior Backend Engineer', hiringManager: 'hana', status: RoleStatus.OPEN, openedDaysAgo: 60 },
-  { key: 'platform', title: 'Platform Engineer', hiringManager: 'hana', status: RoleStatus.OPEN, openedDaysAgo: 30 },
+  { key: 'platform', title: 'Platform Engineer', hiringManager: 'hamid', status: RoleStatus.OPEN, openedDaysAgo: 30 },
   { key: 'design', title: 'Product Designer', hiringManager: 'hana', status: RoleStatus.CLOSED, openedDaysAgo: 90 },
 ] as const satisfies readonly FixtureRole[];
 

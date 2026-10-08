@@ -237,7 +237,8 @@ describe('GET /pipeline — who may read it', () => {
 
     expect(response.status).toBe(200);
     expect(roleOf(response.body, ROLE_IDS.backend)).toBeDefined();
-    expect(roleOf(response.body, ROLE_IDS.platform)).toBeDefined();
+    // Platform is Hamid's req in the fixture — a second seeded manager, same role.
+    expect(roleOf(response.body, ROLE_IDS.platform)).toBeUndefined();
     expect(roleOf(response.body, OTHER_MANAGER_ROLE_ID)).toBeUndefined();
 
     const byId = await get(HIRING_MANAGER, `?roleId=${OTHER_MANAGER_ROLE_ID}`);

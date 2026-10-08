@@ -40,7 +40,7 @@ import {
  */
 export async function seedDatabase(now: Date = new Date()): Promise<Record<UserKey, string>> {
   // One hash for every seeded account: bcrypt at cost 12 is ~250ms, and hashing the same
-  // string seven times would add two seconds to container boot for no benefit. Each row
+  // string eight times would add two seconds to container boot for no benefit. Each row
   // still gets its own salt-bearing hash string — they are simply identical passwords.
   const passwordHash = await hashPassword(DEV_PASSWORD);
 

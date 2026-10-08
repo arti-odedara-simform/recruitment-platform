@@ -7,6 +7,7 @@ import { Icon, Person } from '../components/ui.js';
 const DEMO = [
   { email: 'rachel.recruiter@example.com', name: 'Rachel Ahmed', role: 'Recruiter' },
   { email: 'hana.manager@example.com', name: 'Hana Suzuki', role: 'Hiring manager' },
+  { email: 'hamid.manager@example.com', name: 'Hamid Karimi', role: 'Hiring manager' },
   { email: 'ingrid.interviewer@example.com', name: 'Ingrid Olsen', role: 'Interviewer' },
 ];
 

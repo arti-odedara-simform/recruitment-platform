@@ -7,6 +7,7 @@ import {
   CANDIDATES,
   CANDIDATE_IDS,
   DEV_PASSWORD,
+  ROLES,
   ROUNDS,
   USERS,
   type CandidateKey,
@@ -62,6 +63,19 @@ function printFixture(): void {
       : '(none — assigned to no round)';
     console.log(`  ${pad(user.name, 14)} ${listed}`);
   }
+
+  console.log('\n[seed] Hiring manager scope (reqs owned, and the applications on them):\n');
+
+  for (const user of USERS.filter((u) => u.role === UserRole.HIRING_MANAGER)) {
+    const owned = ROLES.filter((r) => r.hiringManager === user.key);
+    const listed = owned
+      .map((role) => {
+        const count = APPLICATIONS.filter((a) => a.role === role.key).length;
+        return `${role.title} (${role.status}, ${count} applications)`;
+      })
+      .join('; ');
+    console.log(`  ${pad(user.name, 14)} ${listed || '(none — owns no req)'}`);
+  }
 }
 
 function printWalkthrough(): void {
@@ -86,6 +100,12 @@ function printWalkthrough(): void {
   As a recruiter:   full record, contact details included.
   As ingrid:        Amara -> 200 without contact fields; Bruno -> 404.
   As ian:           both -> 404; he is assigned to no round at all.
+
+[seed] Same role, different scope (hiring managers):
+
+  As hana:          Senior Backend Engineer + Product Designer; Platform is absent.
+  As hamid:         Platform Engineer only; Backend and Designer are absent.
+                    Amara is on both reqs — each manager sees only their own application.
 `);
 }
 
